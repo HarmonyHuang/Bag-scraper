@@ -1,0 +1,33 @@
+name: Run Hermes Scraper
+
+on:
+  # 定時：每 15 分鐘
+  schedule:
+    - cron: '*/15 * * * *'
+  # 加上這行以便可以手動觸發（可選）
+  workflow_dispatch:
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: 安裝瀏覽器及驅動
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+      - name: 安裝依賴
+        run: |
+          pip install -r requirements.txt
+      - name: 執行爬蟲
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID:     ${{ secrets.LINE_USER_ID }}
+          GMAIL_USER:       ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS:       ${{ secrets.GMAIL_PASS }}
+          GMAIL_TO:         ${{ secrets.GMAIL_TO }}
+        run: python hermes_scraper_with_line_push.py
