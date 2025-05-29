@@ -3,7 +3,7 @@ name: Hermes Scraper
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"  
+    - cron: "0 * * * *"
 
 jobs:
   build:
@@ -24,7 +24,8 @@ jobs:
 
       - name: Run script
         env:
-          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_TO: ${{ secrets.GMAIL_TO }}
