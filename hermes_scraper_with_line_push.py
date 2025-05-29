@@ -9,8 +9,9 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import yagmail
 
-# ====== 參數 ======
-LINE_TOKEN = os.getenv("LINE_NOTIFY_TOKEN", "你的_LINE_NOTIFY_TOKEN")
+# ====== 參數（Secrets）======
+CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "你的_Channel_Access_Token")
+LINE_USER_ID = os.getenv("LINE_USER_ID", "你的_userId")  # 測試用可直接寫死，未來可自動化
 GMAIL_USER = os.getenv("GMAIL_USER", "你的Gmail帳號")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "你的Gmail應用程式密碼")
 GMAIL_TO = os.getenv("GMAIL_TO", "收件人信箱")
@@ -26,14 +27,25 @@ second_urls = [
     ("Christian Dior", "https://store.2ndstreet.com.tw/v2/Search?q=Christian+Dior&shopId=41320&order=Newest"),
 ]
 
-def send_line_notify(msg):
-    url = "https://notify-api.line.me/api/notify"
-    headers = {"Authorization": f"Bearer {LINE_TOKEN}"}
-    data = {"message": msg}
-    r = requests.post(url, headers=headers, data=data)
-    print(f"LINE Notify 回應: {r.status_code} {r.text}")
+# ===== LINE Messaging API (BOT) 通知 =====
+def send_line_bot_message(user_id, text):
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "to": user_id,
+        "messages": [{
+            "type": "text",
+            "text": text
+        }]
+    }
+    r = requests.post(url, headers=headers, json=data)
+    print(f"LINE Messaging API 回應: {r.status_code} {r.text}")
     return r.status_code
 
+# ===== Gmail 通知 =====
 def send_gmail(subject, body):
     yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
     yag.send(GMAIL_TO, subject, body)
@@ -115,12 +127,12 @@ if len(second_data) > 0:
 
 notify_msg = "\n\n".join(msg_list)
 
-# ===== LINE Notify =====
-if notify_msg and "你的_LINE_NOTIFY_TOKEN" not in LINE_TOKEN:
-    send_line_notify(notify_msg)
+# ===== LINE Messaging API 推播 =====
+if notify_msg and "你的_Channel_Access_Token" not in CHANNEL_ACCESS_TOKEN and "你的_userId" not in LINE_USER_ID:
+    send_line_bot_message(LINE_USER_ID, notify_msg)
 
 # ===== Gmail =====
 if notify_msg and "你的Gmail帳號" not in GMAIL_USER:
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-print("多分類/多品牌爬蟲＋通知完成！")
+print("多分類/多品牌爬蟲＋LINE官方帳號推播＋Gmail 通知完成！")
