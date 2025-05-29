@@ -70,13 +70,25 @@ def read_last_seen_from_gsheet():
     return last_set
 
 def write_current_seen_to_gsheet(df):
-    client = get_gsheet_client()
-    sh = client.open_by_key(GSHEET_ID)
-    ws = sh.worksheet("Sheet1")
-    ws.clear()
-    ws.append_row(df.columns.tolist())
-    for row in df.itertuples(index=False):
-        ws.append_row(list(row))
+    print("==== 準備寫入 Google Sheets ====")
+    print(df.head())
+    try:
+        client = get_gsheet_client()
+        print('client get success')
+        sh = client.open_by_key(GSHEET_ID)
+        print('open sheet success')
+        ws = sh.worksheet("Sheet1")
+        print('get worksheet success')
+        ws.clear()
+        print('sheet clear success')
+        ws.append_row(df.columns.tolist())
+        print('append col success')
+        for row in df.itertuples(index=False):
+            print('正在寫入 row:', row)
+            ws.append_row(list(row))
+        print("==== 已經寫入 Google Sheets ====")
+    except Exception as e:
+        print("寫入 Google Sheets 失敗:", e)
 
 # ===== Hermès 官網多分類 =====
 hermes_data = []
