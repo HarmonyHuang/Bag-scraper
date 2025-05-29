@@ -3,7 +3,7 @@ name: Hermes Scraper
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"  # 台灣時間 2:00 AM 自動執行（UTC+0 18:00）
+    - cron: "0 18 * * *"  # 台灣時間2:00自動執行（UTC+0 18:00）
 
 jobs:
   build:
