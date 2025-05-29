@@ -1,4 +1,6 @@
+selenium
+webdriver-manager
 requests
 beautifulsoup4
-selenium
-line-bot-sdk
+pandas
+yagmail
