@@ -9,9 +9,9 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import yagmail
 
-# ====== 參數（Secrets）======
+# ====== 參數 ======
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "你的_Channel_Access_Token")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "你的_userId")  # 測試用可直接寫死，未來可自動化
+LINE_USER_ID = os.getenv("LINE_USER_ID", "你的_userId")
 GMAIL_USER = os.getenv("GMAIL_USER", "你的Gmail帳號")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "你的Gmail應用程式密碼")
 GMAIL_TO = os.getenv("GMAIL_TO", "收件人信箱")
@@ -116,18 +116,26 @@ data = hermes_data + second_data
 df = pd.DataFrame(data)
 df.to_csv('hermes_and_2ndstreet.csv', index=False, encoding='utf-8-sig')
 
-# ===== 通知內容 =====
-msg_list = []
-if len(hermes_data) > 0:
-    d = hermes_data[0]
-    msg_list.append(f"[{d['source']}]\n{d['name']} {d['color']} {d['price']}\n{d['link']}")
-if len(second_data) > 0:
-    d = second_data[0]
-    msg_list.append(f"[{d['source']}]\n{d['name']} {d['price']}\n{d['link']}")
+# ===== 判斷新品/價格異動 only =====
+notify_list = []
+try:
+    if os.path.exists('last_seen.csv'):
+        last = pd.read_csv('last_seen.csv')
+        last_set = set(last['name'] + "|" + last['price'])
+    else:
+        last_set = set()
+except Exception:
+    last_set = set()
 
-notify_msg = "\n\n".join(msg_list)
+for _, row in df.iterrows():
+    key = f"{row['name']}|{row['price']}"
+    if key not in last_set:
+        msg = f"[{row['source']}]\n{row['name']} {row.get('color', '')} {row['price']}\n{row['link']}"
+        notify_list.append(msg)
 
-# ===== LINE Messaging API 推播 =====
+notify_msg = "\n\n".join(notify_list)
+
+# ===== LINE BOT 通知（只通知新品/變價） =====
 if notify_msg and "你的_Channel_Access_Token" not in CHANNEL_ACCESS_TOKEN and "你的_userId" not in LINE_USER_ID:
     send_line_bot_message(LINE_USER_ID, notify_msg)
 
@@ -135,4 +143,7 @@ if notify_msg and "你的_Channel_Access_Token" not in CHANNEL_ACCESS_TOKEN and 
 if notify_msg and "你的Gmail帳號" not in GMAIL_USER:
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-print("多分類/多品牌爬蟲＋LINE官方帳號推播＋Gmail 通知完成！")
+# ===== 更新 last_seen.csv 檔案 =====
+df.to_csv('last_seen.csv', index=False, encoding='utf-8-sig')
+
+print("只推播新品/變價商品，完成！")
