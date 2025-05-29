@@ -9,18 +9,17 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import yagmail
 import gspread
+import json
 from google.oauth2.service_account import Credentials
 
-# ====== 參數 ======
-CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "你的_Channel_Access_Token")
-LINE_USER_ID = os.getenv("LINE_USER_ID", "你的_userId")
-GMAIL_USER = os.getenv("GMAIL_USER", "你的Gmail帳號")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "你的Gmail應用程式密碼")
-GMAIL_TO = os.getenv("GMAIL_TO", "收件人信箱")
-
-# 以下改成你自己的 spreadsheet_id
-GSHEET_ID = os.getenv("GSHEET_ID", "你的 Google Sheets id")
-GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON", "service_account.json 字串內容")
+# ==== Github secrets 參數 ====
+CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_USER_ID = os.getenv("LINE_USER_ID", "")
+GMAIL_USER = os.getenv("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+GMAIL_TO = os.getenv("GMAIL_TO", "")
+GSHEET_ID = os.getenv("GSHEET_ID", "")
+GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON", "")
 
 hermes_urls = [
     ("包包&手拿包", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/bags-and-clutches/"),
@@ -53,7 +52,6 @@ def send_gmail(subject, body):
 
 # ===== Google Sheets Utility =====
 def get_gsheet_client():
-    import json
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -80,13 +78,70 @@ def write_current_seen_to_gsheet(df):
     for row in df.itertuples(index=False):
         ws.append_row(list(row))
 
-# ===== Hermès/2nd STREET 爬蟲略（同你原本） =====
-# ...（hermes_data, second_data 等同你原本）
+# ===== Hermès 官網多分類 =====
+hermes_data = []
+options = webdriver.ChromeOptions()
+options.add_argument('--headless')
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+for cname, url in hermes_urls:
+    print(f"抓取 Hermès 分類: {cname}")
+    driver.get(url)
+    time.sleep(5)
+    items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item")
+    for item in items:
+        try:
+            name = item.find_element(By.CSS_SELECTOR, ".product-item-name").text.strip()
+            link = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute('href')
+            color = item.find_element(By.CSS_SELECTOR, ".product-item-colors").text.strip().replace("顏色:", "").strip()
+        except Exception:
+            name = link = color = ""
+        try:
+            price = item.find_element(By.CSS_SELECTOR, ".price").text.strip()
+        except Exception:
+            price = ""
+        try:
+            img = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
+        except Exception:
+            img = ""
+        hermes_data.append({
+            "source": f"Hermès官網 {cname}",
+            "name": name,
+            "color": color,
+            "price": price,
+            "link": link,
+            "img": img
+        })
+driver.quit()
+
+# ===== 2nd STREET 多品牌 =====
+second_data = []
+for brand, url in second_urls:
+    print(f"抓取 2nd STREET: {brand}")
+    res = requests.get(url)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    items = soup.select('div.p-list__item')
+    for item in items:
+        try:
+            name = item.select_one('h2.p-list__item__name').text.strip()
+            link = "https://store.2ndstreet.com.tw" + item.select_one('a.p-list__item__inner')['href']
+            price = item.select_one('div.p-list__item__price').text.strip().replace('\n', '')
+            img = item.select_one('img')['src']
+        except Exception:
+            name = link = price = img = ""
+        second_data.append({
+            "source": f"2nd STREET {brand}",
+            "name": name,
+            "color": "",
+            "price": price,
+            "link": link,
+            "img": img
+        })
 
 # ===== 合併資料 =====
 data = hermes_data + second_data
 df = pd.DataFrame(data)
-# df.to_csv('hermes_and_2ndstreet.csv', index=False, encoding='utf-8-sig')
 
 # ===== 判斷新品/價格異動 only，雲端保存 last_seen =====
 try:
@@ -104,12 +159,11 @@ for _, row in df.iterrows():
 
 notify_msg = "\n\n".join(notify_list)
 
-if notify_msg and "你的_Channel_Access_Token" not in CHANNEL_ACCESS_TOKEN and "你的_userId" not in LINE_USER_ID:
+if notify_msg and CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
     send_line_bot_message(LINE_USER_ID, notify_msg)
-if notify_msg and "你的Gmail帳號" not in GMAIL_USER:
+if notify_msg and GMAIL_USER:
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-# ==== 寫回雲端記憶庫 ====
 try:
     write_current_seen_to_gsheet(df)
 except Exception as e:
