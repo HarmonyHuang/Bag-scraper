@@ -52,30 +52,30 @@ def send_gmail(subject, body):
 
 # ===== Google Sheets Utility =====
 def get_gsheet_client():
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.authorize(creds)
-    return client
+    print("進入 get_gsheet_client()")
+    try:
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        print("Google Sheets 驗證成功")
+        return client
+    except Exception as e:
+        print("get_gsheet_client 失敗:", e)
+        raise
 
 def read_last_seen_from_gsheet():
-    try:
-        client = get_gsheet_client()
-        print('[debug] gsheet client get success')
-        sh = client.open_by_key(GSHEET_ID)
-        print('[debug] open sheet success')
-        ws = sh.worksheet("Sheet1")
-        print('[debug] get worksheet success')
-        data = ws.get_all_records()
-        print('[debug] read data from gsheet:', data)
-        last_set = set()
-        for row in data:
-            key = f"{row['name']}|{row['price']}"
-            last_set.add(key)
-        return last_set
-    except Exception as e:
-        print("GS read failed, fallback to empty set:", e)
-        return set()
+    print("進入 read_last_seen_from_gsheet()")
+    client = get_gsheet_client()
+    sh = client.open_by_key(GSHEET_ID)
+    ws = sh.worksheet("Sheet1")
+    data = ws.get_all_records()
+    print(f"現有 Google Sheet rows: {len(data)}")
+    last_set = set()
+    for row in data:
+        key = f"{row['name']}|{row['price']}"
+        last_set.add(key)
+    return last_set
 
 def write_current_seen_to_gsheet(df):
     print("==== 準備寫入 Google Sheets ====")
@@ -97,6 +97,8 @@ def write_current_seen_to_gsheet(df):
         print("==== 已經寫入 Google Sheets ====")
     except Exception as e:
         print("寫入 Google Sheets 失敗:", e)
+    finally:
+        print("【Debug結束】write_current_seen_to_gsheet 執行到最後")
 
 # ===== Hermès 官網多分類 =====
 hermes_data = []
@@ -164,7 +166,11 @@ data = hermes_data + second_data
 df = pd.DataFrame(data)
 
 # ===== 判斷新品/價格異動 only，雲端保存 last_seen =====
-last_set = read_last_seen_from_gsheet()
+try:
+    last_set = read_last_seen_from_gsheet()
+except Exception as e:
+    print("GS read failed, fallback to empty set:", e)
+    last_set = set()
 
 notify_list = []
 for _, row in df.iterrows():
@@ -176,10 +182,15 @@ for _, row in df.iterrows():
 notify_msg = "\n\n".join(notify_list)
 
 if notify_msg and CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
+    print("發送 LINE 訊息")
     send_line_bot_message(LINE_USER_ID, notify_msg)
 if notify_msg and GMAIL_USER:
+    print("發送 GMAIL")
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-write_current_seen_to_gsheet(df)
+try:
+    write_current_seen_to_gsheet(df)
+except Exception as e:
+    print("GS write failed:", e)
 
 print("只推播新品/變價商品（Google Sheets記憶版）完成！")
