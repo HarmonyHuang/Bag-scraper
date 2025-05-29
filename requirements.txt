@@ -1,8 +1,8 @@
-selenium
-webdriver-manager
-requests
-beautifulsoup4
-pandas
-yagmail
 gspread
 google-auth
+selenium
+webdriver-manager
+yagmail
+pandas
+bs4
+requests
