@@ -59,15 +59,23 @@ def get_gsheet_client():
     return client
 
 def read_last_seen_from_gsheet():
-    client = get_gsheet_client()
-    sh = client.open_by_key(GSHEET_ID)
-    ws = sh.worksheet("Sheet1")
-    data = ws.get_all_records()
-    last_set = set()
-    for row in data:
-        key = f"{row['name']}|{row['price']}"
-        last_set.add(key)
-    return last_set
+    try:
+        client = get_gsheet_client()
+        print('[debug] gsheet client get success')
+        sh = client.open_by_key(GSHEET_ID)
+        print('[debug] open sheet success')
+        ws = sh.worksheet("Sheet1")
+        print('[debug] get worksheet success')
+        data = ws.get_all_records()
+        print('[debug] read data from gsheet:', data)
+        last_set = set()
+        for row in data:
+            key = f"{row['name']}|{row['price']}"
+            last_set.add(key)
+        return last_set
+    except Exception as e:
+        print("GS read failed, fallback to empty set:", e)
+        return set()
 
 def write_current_seen_to_gsheet(df):
     print("==== 準備寫入 Google Sheets ====")
@@ -156,11 +164,7 @@ data = hermes_data + second_data
 df = pd.DataFrame(data)
 
 # ===== 判斷新品/價格異動 only，雲端保存 last_seen =====
-try:
-    last_set = read_last_seen_from_gsheet()
-except Exception as e:
-    print("GS read failed, fallback to empty set:", e)
-    last_set = set()
+last_set = read_last_seen_from_gsheet()
 
 notify_list = []
 for _, row in df.iterrows():
@@ -176,9 +180,6 @@ if notify_msg and CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
 if notify_msg and GMAIL_USER:
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-try:
-    write_current_seen_to_gsheet(df)
-except Exception as e:
-    print("GS write failed:", e)
+write_current_seen_to_gsheet(df)
 
 print("只推播新品/變價商品（Google Sheets記憶版）完成！")
