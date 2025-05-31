@@ -28,10 +28,9 @@ hermes_urls = [
     ("小皮件",     "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/small-leather-goods/"),
 ]
 
-# ===== 2nd STREET 要爬的兩個品牌：HERMES 與 Christian Dior（已移除 CHANEL） =====
+# ===== 2nd STREET 要爬的唯一品牌：HERMES（已移除 CHANEL、Christian Dior） =====
 second_urls = [
-    ("HERMES",         "https://store.2ndstreet.com.tw/v2/Search?q=HERMES&shopId=41320&order=Newest"),
-    ("Christian Dior", "https://store.2ndstreet.com.tw/v2/Search?q=Christian+Dior&shopId=41320&order=Newest"),
+    ("HERMES", "https://store.2ndstreet.com.tw/v2/Search?q=HERMES&shopId=41320&order=Newest"),
 ]
 
 # ====== LINE 推播：支援長訊息自動拆段 ======
@@ -131,7 +130,6 @@ def write_current_seen_to_gsheet(df):
 
         # 一次性清空 + 批次更新
         ws.clear()
-        # 假設你的 DataFrame 有 6 個欄位 (A-F)，row 數 = len(all_values)
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
         ws.update(cell_range, all_values)
