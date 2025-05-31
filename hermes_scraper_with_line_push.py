@@ -53,16 +53,12 @@ def send_gmail(subject, body):
 # ===== Google Sheets Utility =====
 def get_gsheet_client():
     print("進入 get_gsheet_client()")
-    try:
-        creds_dict = json.loads(GOOGLE_CREDS_JSON)
-        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        print("Google Sheets 驗證成功")
-        return client
-    except Exception as e:
-        print("get_gsheet_client 失敗:", e)
-        raise
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
+    scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    print("Google Sheets 驗證成功")
+    return client
 
 def read_last_seen_from_gsheet():
     print("進入 read_last_seen_from_gsheet()")
@@ -70,7 +66,7 @@ def read_last_seen_from_gsheet():
     sh = client.open_by_key(GSHEET_ID)
     ws = sh.worksheet("Sheet1")
     data = ws.get_all_records()
-    print(f"現有 Google Sheet rows: {len(data)}")
+    print(f"[讀取] Google Sheet 共 {len(data)} 筆")
     last_set = set()
     for row in data:
         key = f"{row['name']}|{row['price']}"
@@ -147,9 +143,17 @@ for brand, url in second_urls:
     for item in items:
         try:
             name = item.select_one('h2.p-list__item__name').text.strip()
-            link = "https://store.2ndstreet.com.tw" + item.select_one('a.p-list__item__inner')['href']
+            raw_link = item.select_one('a.p-list__item__inner')['href']
+            link = raw_link if raw_link.startswith('http') else f"https://store.2ndstreet.com.tw{ raw_link }"
             price = item.select_one('div.p-list__item__price').text.strip().replace('\n', '')
-            img = item.select_one('img')['src']
+            raw_img = item.select_one('img')['src']
+            # 如果是協議相對路徑，就補 https:
+            if raw_img.startswith('//'):
+                img = f"https:{ raw_img }"
+            elif raw_img.startswith('http'):
+                img = raw_img
+            else:
+                img = f"https://store.2ndstreet.com.tw{ raw_img }"
         except Exception:
             name = link = price = img = ""
         second_data.append({
@@ -188,9 +192,6 @@ if notify_msg and GMAIL_USER:
     print("發送 GMAIL")
     send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-try:
-    write_current_seen_to_gsheet(df)
-except Exception as e:
-    print("GS write failed:", e)
+write_current_seen_to_gsheet(df)
 
 print("只推播新品/變價商品（Google Sheets記憶版）完成！")
