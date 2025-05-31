@@ -13,7 +13,7 @@ import gspread
 import json
 from google.oauth2.service_account import Credentials
 
-# ==== 環境變數 (GitHub Secrets / 本地 Export) ====
+# ==== 環境變數 (請在 GitHub Secrets 或本地環境設定) ====
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_USER_ID            = os.getenv("LINE_USER_ID", "")
 GMAIL_USER              = os.getenv("GMAIL_USER", "")
@@ -35,27 +35,60 @@ second_urls = [
     ("Christian Dior", "https://store.2ndstreet.com.tw/v2/Search?q=Christian+Dior&shopId=41320&order=Newest"),
 ]
 
-# ====== LINE BOT 推播 ======
+# ===== LINE 推播：支援長訊息自動拆段 =====
 def send_line_bot_message(user_id, text):
+    """
+    如果 text 長度 <= 5000，直接呼叫一次 push API。
+    如果 text 長度 > 5000，則自動拆成多段 (每段 <= 4900 字) 逐段發送。
+    """
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-    data = {
-        "to": user_id,
-        "messages": [{"type": "text", "text": text}]
-    }
-    r = requests.post(url, headers=headers, json=data)
-    print(f"LINE Messaging API 回應: {r.status_code} {r.text}")
-    return r.status_code
 
-# ====== Gmail 寄信 ======
+    # LINE single text 的最大長度為 5000 bytes (約 5000 個中文字)
+    MAX_LEN = 4900  # 稍微預留些空間
+
+    # 幫忙把長文字切段：
+    def chunk_text(long_text, chunk_size=MAX_LEN):
+        chunks = []
+        start = 0
+        while start < len(long_text):
+            chunks.append(long_text[start:start+chunk_size])
+            start += chunk_size
+        return chunks
+
+    # 如果這段文字本身就超過 MAX_LEN，拆成多段
+    if len(text) <= MAX_LEN:
+        payload = {
+            "to": user_id,
+            "messages": [{"type": "text", "text": text}]
+        }
+        r = requests.post(url, headers=headers, json=payload)
+        print(f"LINE Messaging API 回應: {r.status_code} {r.text}")
+        return r.status_code
+    else:
+        # 拆段逐段發
+        status_codes = []
+        chunks = chunk_text(text, MAX_LEN)
+        for part in chunks:
+            payload = {
+                "to": user_id,
+                "messages": [{"type": "text", "text": part}]
+            }
+            r = requests.post(url, headers=headers, json=payload)
+            print(f"LINE Messaging API 回應 (拆段): {r.status_code} {r.text}")
+            status_codes.append(r.status_code)
+            time.sleep(0.5)  # 稍微休息，避免瞬間送太多
+        return status_codes
+
+# ===== Gmail 寄信 =====
 def send_gmail(subject, body):
     yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
     yag.send(GMAIL_TO, subject, body)
 
-# ====== Google Sheets 操作 ======
+# ===== Google Sheets 操作 =====
 def get_gsheet_client():
     print("進入 get_gsheet_client()")
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
@@ -86,23 +119,31 @@ def read_last_seen_from_gsheet():
         return set()
 
 def write_current_seen_to_gsheet(df):
+    """
+    直接把整個 DataFrame 一次性更新到 Google Sheets：
+    先把第一列欄位名稱與所有列值放進一個二維 list，
+    再用 ws.update(range, values) 一次全部寫入，避免大量 append_row 調用造成配額不足。
+    """
     print("==== 準備寫入 Google Sheets ====")
     print(df.head())
     try:
         client = get_gsheet_client()
         sh = client.open_by_key(GSHEET_ID)
         ws = sh.worksheet("Sheet1")
+        # 把 DataFrame 轉成二維 list
+        all_values = [df.columns.tolist()] + df.values.tolist()
+        # 清空之後一次性更新
         ws.clear()
-        ws.append_row(df.columns.tolist())
-        for row in df.itertuples(index=False):
-            ws.append_row(list(row))
+        # 一次把整塊範圍貼上去 (A1 開始)
+        cell_range = f"A1:F{len(all_values)}"
+        ws.update(cell_range, all_values)
         print("==== 已經寫入 Google Sheets ====")
     except Exception as e:
         print("寫入 Google Sheets 失敗:", e)
     finally:
         print("【Debug結束】write_current_seen_to_gsheet 執行到最後")
 
-# ===== 抓 Hermès 官網 =====
+# ===== 抓 Hermès 官網：兩個分類 =====
 hermes_data = []
 chrome_options = Options()
 chrome_options.add_argument('--headless')
@@ -117,7 +158,7 @@ driver = webdriver.Chrome(
 for cname, url in hermes_urls:
     print(f"抓取 Hermès 分類: {cname}")
     driver.get(url)
-    time.sleep(5)  # 等待完全渲染
+    time.sleep(5)  # 等待頁面渲染完成
     items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item")
     print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
     for item in items:
@@ -146,24 +187,22 @@ for cname, url in hermes_urls:
 
 driver.quit()
 
-# ===== 抓 2nd STREET (含動態滾動) =====
+# ===== 抓 2nd STREET (Selenium 動態滾動) =====
 second_data = []
 
 for brand, url in second_urls:
     print(f"抓取 2nd STREET: {brand} (Selenium 版動態載入)")
-    # 用 Selenium 先打開這個搜尋結果
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=chrome_options
     )
     driver.get(url)
-    time.sleep(3)
+    time.sleep(3)  # 等待 React 初步載入
 
-    # 以下做「向下滾動」直到頁面底部，確保動態渲染的商品全部載入
+    # 動態滾動到最底部，讓所有商品都載入
     SCROLL_PAUSE_SEC = 2
     last_height = driver.execute_script("return document.body.scrollHeight")
     while True:
-        # 滾到底部
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(SCROLL_PAUSE_SEC)
         new_height = driver.execute_script("return document.body.scrollHeight")
@@ -171,22 +210,22 @@ for brand, url in second_urls:
             break
         last_height = new_height
 
-    # 等最後一次動態載入完成後，把完整 HTML 交給 BeautifulSoup
+    # 取得完整渲染後的 HTML
     page_source = driver.page_source
     soup = BeautifulSoup(page_source, "html.parser")
 
-    # 根據你的檢查元素結果，最外層商品卡片是 <li class="column-grid-container__column">
+    # 根據實際檢查結果，最外層商品卡片是 <li class="column-grid-container__column">
     cards = soup.select("li.column-grid-container__column")
     print(f"► 本次共找到 {len(cards)} 張 2nd STREET「{brand}」商品卡片")
 
     for card in cards:
         try:
-            # (1) 將最外層 <a> 標籤的 href 取為 link
+            # (1) 連結： <a href="…">
             a_tag = card.select_one("a")
             raw_href = a_tag["href"] if (a_tag and a_tag.has_attr("href")) else ""
             link = raw_href if raw_href.startswith("http") else f"https://store.2ndstreet.com.tw{raw_href}"
 
-            # (2) 圖片元素 <img class="product-card__vertical__media ...">
+            # (2) 圖片與名稱：<img class="product-card__vertical__media …" alt="…">
             img_tag = card.select_one("img.product-card__vertical__media")
             if img_tag and img_tag.has_attr("src"):
                 raw_src = img_tag["src"]
@@ -198,14 +237,13 @@ for brand, url in second_urls:
                     img = f"https://{raw_src}"
             else:
                 img = ""
-            # (3) 名稱直接讀取 img 的 alt
             name = img_tag["alt"].strip() if (img_tag and img_tag.has_attr("alt")) else ""
 
-            # (4) 價格在 <div class="sc-lgQHWK eQJqfn">
+            # (3) 價格：<div class="sc-lgQHWK eQJqfn">NT$ xx,xxx</div>
             price_tag = card.select_one("div.sc-lgQHWK.eQJqfn")
             price = price_tag.text.strip() if price_tag else ""
 
-            # (5) 2nd STREET 不顯示 color，留空
+            # 2nd STREET 通常不顯示「color」
             color = ""
 
         except Exception:
@@ -222,14 +260,14 @@ for brand, url in second_urls:
 
     driver.quit()
 
-# ===== 合併所有商品資料 =====
+# ===== 合併所有商品，準備比對新品／變價 =====
 data = hermes_data + second_data
 df = pd.DataFrame(data)
 
-# ===== 從 Google Sheets 讀取「上次已見」set =====
+# ===== 讀取 Google Sheets 上一次的 name|price set =====
 last_set = read_last_seen_from_gsheet()
 
-# ===== 比對：若 name|price 不在 last_set，就加入通知列表 =====
+# ===== 比對：如果 name|price 不在 last_set，就把它當作「新品/變價」加入通知 =====
 notify_list = []
 for _, row in df.iterrows():
     key = f"{row['name']}|{row['price']}"
@@ -237,18 +275,24 @@ for _, row in df.iterrows():
         msg = f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
         notify_list.append(msg)
 
-notify_msg = "\n\n".join(notify_list)
+# 如果沒有任何新品/變價，就不發通知
+if notify_list:
+    notify_msg = "\n\n".join(notify_list)
 
-# ===== 發送 LINE & Gmail 通知 =====
-if notify_msg and CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
-    print("發送 LINE 訊息")
-    send_line_bot_message(LINE_USER_ID, notify_msg)
+    # ===== 發送 LINE 通知（如過長會自動拆段） =====
+    if CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
+        print("發送 LINE 訊息")
+        send_line_bot_message(LINE_USER_ID, notify_msg)
 
-if notify_msg and GMAIL_USER:
-    print("發送 GMAIL")
-    send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
+    # ===== 發送 GMAIL 通知 =====
+    if GMAIL_USER:
+        print("發送 GMAIL")
+        send_gmail("Hermès/2nd STREET 新上架商品", notify_msg)
 
-# ===== 把本次所有商品寫回 Google Sheets =====
+else:
+    print("本次無新增或變價商品，跳過通知。")
+
+# ===== 最後把本次所有商品寫回 Google Sheets （一次性更新） =====
 write_current_seen_to_gsheet(df)
 
 print("只推播新品/變價商品（Google Sheets 記憶版）完成！")
