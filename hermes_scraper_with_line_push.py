@@ -126,7 +126,8 @@ def write_current_seen_to_gsheet(df):
         ws.clear()
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
-        ws.update(cell_range, all_values)
+        # 使用命名參數，先給 values 再給 range_name
+        ws.update(values=all_values, range_name=cell_range)
         print("==== 已經寫入 Google Sheets ====")
     except Exception as e:
         print("寫入 Google Sheets 失敗:", e)
