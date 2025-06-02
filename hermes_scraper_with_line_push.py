@@ -15,32 +15,32 @@ from google.oauth2.service_account import Credentials
 
 # ==== 環境變數 (GitHub Secrets 或本地 Export) ====
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_USER_ID            = os.getenv("LINE_USER_ID", "")
-GMAIL_USER              = os.getenv("GMAIL_USER", "")
-GMAIL_APP_PASSWORD      = os.getenv("GMAIL_APP_PASSWORD", "")
-GMAIL_TO                = os.getenv("GMAIL_TO", "")
-GSHEET_ID               = os.getenv("GSHEET_ID", "")
-GOOGLE_CREDS_JSON       = os.getenv("GOOGLE_CREDS_JSON", "")
+GMAIL_USER            = os.getenv("GMAIL_USER", "")
+GMAIL_APP_PASSWORD    = os.getenv("GMAIL_APP_PASSWORD", "")
+GMAIL_TO              = os.getenv("GMAIL_TO", "")
+GSHEET_ID             = os.getenv("GSHEET_ID", "")
+GOOGLE_CREDS_JSON     = os.getenv("GOOGLE_CREDS_JSON", "")
 
-# ===== 只保留 Hermès 官方網站 要爬的兩個分類 =====
+# ===== Hermès 官方網站 要爬的兩個分類 =====
 hermes_urls = [
     ("包包&手拿包", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/bags-and-clutches/"),
     ("小皮件",     "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/small-leather-goods/"),
 ]
 
-# ====== LINE 推播：支援長訊息自動拆段 ======
-def send_line_bot_message(user_id, text):
+# ====== LINE Broadcast：支援長訊息自動拆段 ======
+def send_line_broadcast_message(text):
     """
-    如果 text 長度 <= 5000，就一次推播。
-    否則自動拆成不超過 4900 字的小段，逐段呼叫 LINE API。
+    以 broadcast 方式推播給所有追蹤此官方帳號的用戶。
+    需要 Messaging API 已開啟 Broadcast 並使用付費方案。
+    同時支援超過 5000 bytes 自動拆段功能。
     """
-    url = "https://api.line.me/v2/bot/message/push"
+    url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {
         "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    MAX_LEN = 4900  # LINE API 單次限制約 5000 bytes，保留 margin 100 字
+    MAX_LEN = 4900  # LINE API 單次限制約 5000 bytes，保留 margin 一些空間
 
     def chunk_text(long_text, chunk_size=MAX_LEN):
         chunks = []
@@ -50,27 +50,19 @@ def send_line_bot_message(user_id, text):
             start += chunk_size
         return chunks
 
-    # 如果整段文字已經不超過 MAX_LEN，就直接推播
     if len(text) <= MAX_LEN:
-        payload = {
-            "to": user_id,
-            "messages": [{"type": "text", "text": text}],
-        }
+        payload = {"messages": [{"type": "text", "text": text}]}
         r = requests.post(url, headers=headers, json=payload)
-        print(f"LINE Messaging API 回應: {r.status_code} {r.text}")
+        print(f"LINE Broadcast 回應: {r.status_code} {r.text}")
         return [r.status_code]
     else:
-        # 拆段逐段發
         status_codes = []
         for part in chunk_text(text, MAX_LEN):
-            payload = {
-                "to": user_id,
-                "messages": [{"type": "text", "text": part}],
-            }
+            payload = {"messages": [{"type": "text", "text": part}]}
             r = requests.post(url, headers=headers, json=payload)
-            print(f"LINE Messaging API 回應 (拆段): {r.status_code} {r.text}")
+            print(f"LINE Broadcast 拆段回應: {r.status_code} {r.text}")
             status_codes.append(r.status_code)
-            time.sleep(0.5)  # 小小延遲，避免瞬間 burst
+            time.sleep(0.5)
         return status_codes
 
 # ====== Gmail 寄信 ======
@@ -157,17 +149,13 @@ for cname, url in hermes_urls:
 
     for item in items:
         try:
-            # 抓取相對路徑或絕對路徑
             raw_href = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
             if raw_href.startswith("/"):
                 link = "https://www.hermes.com" + raw_href
             else:
                 link = raw_href
 
-            # 商品名稱
             name = item.find_element(By.CSS_SELECTOR, ".product-item-name span").text.strip()
-
-            # 顏色（若有）
             color = (
                 item.find_element(By.CSS_SELECTOR, ".product-item-colors")
                 .text.strip()
@@ -191,16 +179,14 @@ for cname, url in hermes_urls:
         except Exception:
             img = ""
 
-        hermes_data.append(
-            {
-                "source": f"Hermès官網 {cname}",
-                "name":   name,
-                "color":  color,
-                "price":  price,
-                "link":   link,
-                "img":    img,
-            }
-        )
+        hermes_data.append({
+            "source": f"Hermès官網 {cname}",
+            "name":   name,
+            "color":  color,
+            "price":  price,
+            "link":   link,
+            "img":    img,
+        })
 
 driver.quit()
 
@@ -221,13 +207,13 @@ for _, row in df.iterrows():
         )
         new_keys.add(key)
 
-# 如果沒有新貨，就直接更新 Sheet 然後結束
+# 如果沒有新貨，就直接更新 Sheet，然後結束
 if not notify_list:
     print("本次無新增或變價商品，跳過通知。")
     write_current_seen_to_gsheet(df)
     sys.exit(0)
 
-# 先把「剛要通知的 key」暫時加入 last_set 以避免重複通知
+# 先把「剛要通知的 key」暫時加入 last_set_temp，以避免重複通知
 last_set_temp = last_set.copy()
 last_set_temp.update(new_keys)
 
@@ -237,14 +223,14 @@ write_current_seen_to_gsheet(df)
 # 合併通知文字
 notify_msg = "\n\n".join(notify_list)
 
-# 發送 LINE
-if CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
-    print("發送 LINE 訊息")
-    send_line_bot_message(LINE_USER_ID, notify_msg)
+# 使用 broadcast 方式發送 LINE 訊息
+if CHANNEL_CHANNEL_ACCESS_TOKEN := CHANNEL_ACCESS_TOKEN:  # 確保 Token 有設定
+    print("發送 LINE Broadcast 訊息")
+    send_line_broadcast_message(notify_msg)
 
 # 發送 GMAIL
 if GMAIL_USER:
     print("發送 GMAIL")
     send_gmail("Hermès 新上架／變價通知", notify_msg)
 
-print("只推播 Hermès 新品／變價商品（Google Sheets 記憶版）完成！")
+print("只推播 Hermès 新品／變價商品（Broadcast + Google Sheets 記憶版）完成！")
