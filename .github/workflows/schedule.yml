@@ -1,40 +1,37 @@
-name: Hermes Scraper
+name: Hermes Scraper (台北時區 06:00~23:59)
 
 on:
-  # 手動觸發
   workflow_dispatch:
-  # 每小時執行一次
   schedule:
-    - cron: "0/15 * * * *"
+    # 下面這行表示：UTC 時間每天 22:00~23:59（前一天）以及
+    # UTC 時間次日 00:00~15:59，共同組成臺灣時間 06:00~23:59，
+    # 全部以每 15 分鐘執行一次。
+    - cron: "*/15 22-23,0-15 * * *"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 檢出程式碼
       - uses: actions/checkout@v4
 
-      # 設定 Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 安裝相依套件
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 執行爬蟲 & 通知 & 寫入 Google Sheets
       - name: Run script
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID:              ${{ secrets.LINE_USER_ID }}
-          GMAIL_USER:                ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
-          GMAIL_TO:                  ${{ secrets.GMAIL_TO }}
-          GSHEET_ID:                 ${{ secrets.GSHEET_ID }}
-          GOOGLE_CREDS_JSON:         ${{ secrets.GOOGLE_CREDS_JSON }}
+          LINE_USER_ID:            ${{ secrets.LINE_USER_ID }}
+          GMAIL_USER:              ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:      ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:                ${{ secrets.GMAIL_TO }}
+          GSHEET_ID:               ${{ secrets.GSHEET_ID }}
+          GOOGLE_CREDS_JSON:       ${{ secrets.GOOGLE_CREDS_JSON }}
         run: python hermes_scraper_with_line_push.py
