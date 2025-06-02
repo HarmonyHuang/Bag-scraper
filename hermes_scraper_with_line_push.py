@@ -45,7 +45,7 @@ def send_line_bot_message(user_id, text):
         chunks = []
         start = 0
         while start < len(long_text):
-            chunks.append(long_text[start:start+chunk_size])
+            chunks.append(long_text[start : start + chunk_size])
             start += chunk_size
         return chunks
 
@@ -53,7 +53,7 @@ def send_line_bot_message(user_id, text):
     if len(text) <= MAX_LEN:
         payload = {
             "to": user_id,
-            "messages": [{"type": "text", "text": text}]
+            "messages": [{"type": "text", "text": text}],
         }
         r = requests.post(url, headers=headers, json=payload)
         print(f"LINE Messaging API 回應: {r.status_code} {r.text}")
@@ -64,7 +64,7 @@ def send_line_bot_message(user_id, text):
         for part in chunk_text(text, MAX_LEN):
             payload = {
                 "to": user_id,
-                "messages": [{"type": "text", "text": part}]
+                "messages": [{"type": "text", "text": part}],
             }
             r = requests.post(url, headers=headers, json=payload)
             print(f"LINE Messaging API 回應 (拆段): {r.status_code} {r.text}")
@@ -83,7 +83,7 @@ def get_gsheet_client():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     scopes = [
         "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
+        "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
@@ -126,7 +126,7 @@ def write_current_seen_to_gsheet(df):
         ws.clear()
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
-        # 使用命名參數，先給 values 再給 range_name
+        # 使用命名參數：先給 values，再給 range_name
         ws.update(values=all_values, range_name=cell_range)
         print("==== 已經寫入 Google Sheets ====")
     except Exception as e:
@@ -137,26 +137,33 @@ def write_current_seen_to_gsheet(df):
 # ===== 抓 Hermès 官網 =====
 hermes_data = []
 chrome_options = Options()
-chrome_options.add_argument('--headless')
-chrome_options.add_argument('--no-sandbox')
-chrome_options.add_argument('--disable-dev-shm-usage')
+chrome_options.add_argument("--headless")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
 
 driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()),
-    options=chrome_options
+    service=Service(ChromeDriverManager().install()), options=chrome_options
 )
 
 for cname, url in hermes_urls:
     print(f"抓取 Hermès 分類: {cname}")
     driver.get(url)
     time.sleep(5)  # 等待頁面完整渲染
-    items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item")
+
+    # 這裡同時嘗試抓老 class (product-grid-list-item) 以及新 class (product-grid-item)
+    items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")
     print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
+
     for item in items:
         try:
-            name  = item.find_element(By.CSS_SELECTOR, ".product-item-name").text.strip()
-            link  = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
-            color = item.find_element(By.CSS_SELECTOR, ".product-item-colors").text.strip().replace("顏色:", "").strip()
+            name = item.find_element(By.CSS_SELECTOR, ".product-item-name").text.strip()
+            link = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
+            color = (
+                item.find_element(By.CSS_SELECTOR, ".product-item-colors")
+                .text.strip()
+                .replace("顏色:", "")
+                .strip()
+            )
         except:
             name = link = color = ""
         try:
@@ -167,14 +174,16 @@ for cname, url in hermes_urls:
             img = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
         except:
             img = ""
-        hermes_data.append({
-            "source": f"Hermès官網 {cname}",
-            "name":   name,
-            "color":  color,
-            "price":  price,
-            "link":   link,
-            "img":    img
-        })
+        hermes_data.append(
+            {
+                "source": f"Hermès官網 {cname}",
+                "name": name,
+                "color": color,
+                "price": price,
+                "link": link,
+                "img": img,
+            }
+        )
 
 driver.quit()
 
