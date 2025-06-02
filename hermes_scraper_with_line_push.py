@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import requests
 from selenium import webdriver
@@ -150,38 +151,54 @@ for cname, url in hermes_urls:
     driver.get(url)
     time.sleep(5)  # 等待頁面完整渲染
 
-    # 這裡同時嘗試抓老 class (product-grid-list-item) 以及新 class (product-grid-item)
+    # 同時尋找舊版與新版的商品容器
     items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")
     print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
 
     for item in items:
         try:
-            name = item.find_element(By.CSS_SELECTOR, ".product-item-name").text.strip()
-            link = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
+            # 抓取相對路徑或絕對路徑
+            raw_href = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
+            if raw_href.startswith("/"):
+                link = "https://www.hermes.com" + raw_href
+            else:
+                link = raw_href
+
+            # 商品名稱
+            name = item.find_element(By.CSS_SELECTOR, ".product-item-name span").text.strip()
+
+            # 顏色（若有）
             color = (
                 item.find_element(By.CSS_SELECTOR, ".product-item-colors")
                 .text.strip()
                 .replace("顏色:", "")
                 .strip()
             )
-        except:
+        except Exception:
             name = link = color = ""
+
         try:
             price = item.find_element(By.CSS_SELECTOR, ".price").text.strip()
-        except:
+        except Exception:
             price = ""
+
         try:
-            img = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
-        except:
+            raw_src = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
+            if raw_src.startswith("//"):
+                img = "https:" + raw_src
+            else:
+                img = raw_src
+        except Exception:
             img = ""
+
         hermes_data.append(
             {
                 "source": f"Hermès官網 {cname}",
-                "name": name,
-                "color": color,
-                "price": price,
-                "link": link,
-                "img": img,
+                "name":   name,
+                "color":  color,
+                "price":  price,
+                "link":   link,
+                "img":    img,
             }
         )
 
@@ -193,31 +210,41 @@ df = pd.DataFrame(hermes_data)
 # 讀取 Google Sheets 上次已見 (name|price)
 last_set = read_last_seen_from_gsheet()
 
-# 比對：若 name|price 不在 last_set，就當作新品/變價，加入通知
+# 比對：若 name|price 不在 last_set，就當作新品/變價，準備通知
 notify_list = []
+new_keys = set()
 for _, row in df.iterrows():
     key = f"{row['name']}|{row['price']}"
     if key not in last_set:
-        msg = f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
-        notify_list.append(msg)
+        notify_list.append(
+            f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
+        )
+        new_keys.add(key)
 
-# 如果有新品/變價，再一次性召喚 LINE + Gmail
-if notify_list:
-    notify_msg = "\n\n".join(notify_list)
-
-    # （1）LINE 推播：如果太長，內部會自動拆段
-    if CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
-        print("發送 LINE 訊息")
-        send_line_bot_message(LINE_USER_ID, notify_msg)
-
-    # （2）Gmail 通知
-    if GMAIL_USER:
-        print("發送 GMAIL")
-        send_gmail("Hermès 新上架／變價通知", notify_msg)
-else:
+# 如果沒有新貨，就直接更新 Sheet 然後結束
+if not notify_list:
     print("本次無新增或變價商品，跳過通知。")
+    write_current_seen_to_gsheet(df)
+    sys.exit(0)
 
-# 最後，一次性把本次整張表更新到 Google Sheets
+# 先把「剛要通知的 key」暫時加入 last_set 以避免重複通知
+last_set_temp = last_set.copy()
+last_set_temp.update(new_keys)
+
+# 將整個 DataFrame 內容一次性寫回 Google Sheets
 write_current_seen_to_gsheet(df)
+
+# 合併通知文字
+notify_msg = "\n\n".join(notify_list)
+
+# 發送 LINE
+if CHANNEL_ACCESS_TOKEN and LINE_USER_ID:
+    print("發送 LINE 訊息")
+    send_line_bot_message(LINE_USER_ID, notify_msg)
+
+# 發送 GMAIL
+if GMAIL_USER:
+    print("發送 GMAIL")
+    send_gmail("Hermès 新上架／變價通知", notify_msg)
 
 print("只推播 Hermès 新品／變價商品（Google Sheets 記憶版）完成！")
