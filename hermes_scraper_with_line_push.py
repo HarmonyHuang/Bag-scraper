@@ -21,18 +21,18 @@ GMAIL_TO              = os.getenv("GMAIL_TO", "")
 GSHEET_ID             = os.getenv("GSHEET_ID", "")
 GOOGLE_CREDS_JSON     = os.getenv("GOOGLE_CREDS_JSON", "")
 
-# ===== Hermès 官方網站 要爬的兩個分類 =====
+# ===== 爬取 Hermès 官網 兩個分類 =====
 hermes_urls = [
     ("包包&手拿包", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/bags-and-clutches/"),
     ("小皮件",     "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/small-leather-goods/"),
 ]
 
-# ====== LINE Broadcast：支援長訊息自動拆段 ======
+# ===== LINE Broadcast (推送給所有追蹤者)，並自動拆段超長文字 =====
 def send_line_broadcast_message(text):
     """
     以 broadcast 方式推播給所有追蹤此官方帳號的用戶。
-    需要 Messaging API 已開啟 Broadcast 並使用付費方案。
-    同時支援超過 5000 bytes 自動拆段功能。
+    必須在 LINE 官方帳號的 Messaging API 設定中「允許 Broadcast」並使用付費方案。
+    內建自動將超過 5000 bytes 的文字拆成多段，每段不超過 4900 bytes 再逐一送出。
     """
     url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {
@@ -40,7 +40,7 @@ def send_line_broadcast_message(text):
         "Content-Type": "application/json"
     }
 
-    MAX_LEN = 4900  # LINE API 單次限制約 5000 bytes，保留 margin 一些空間
+    MAX_LEN = 4900  # LINE API 單次限制約 5000 bytes，留些 margin
 
     def chunk_text(long_text, chunk_size=MAX_LEN):
         chunks = []
@@ -57,7 +57,7 @@ def send_line_broadcast_message(text):
         return [r.status_code]
     else:
         status_codes = []
-        for part in chunk_text(text, MAX_LEN):
+        for part in chunk_text(text):
             payload = {"messages": [{"type": "text", "text": part}]}
             r = requests.post(url, headers=headers, json=payload)
             print(f"LINE Broadcast 拆段回應: {r.status_code} {r.text}")
@@ -65,13 +65,17 @@ def send_line_broadcast_message(text):
             time.sleep(0.5)
         return status_codes
 
-# ====== Gmail 寄信 ======
+# ===== Gmail 通知 =====
 def send_gmail(subject, body):
     yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
     yag.send(GMAIL_TO, subject, body)
 
-# ===== Google Sheets 操作 =====
+# ===== Google Sheets 客戶端與讀寫 =====
 def get_gsheet_client():
+    """
+    從環境變數 GOOGLE_CREDS_JSON 讀取 Service Account JSON，
+    授權並返回 gspread client。
+    """
     print("進入 get_gsheet_client()")
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
     scopes = [
@@ -84,6 +88,11 @@ def get_gsheet_client():
     return client
 
 def read_last_seen_from_gsheet():
+    """
+    開啟指定工作表 (GSHEET_ID)，讀取 Sheet1 的所有列，
+    將 'name|price' 組合放入 set 後回傳。
+    若失敗 (token 錯誤、網路問題)，就回傳空集合。
+    """
     print("進入 read_last_seen_from_gsheet()")
     try:
         client = get_gsheet_client()
@@ -102,8 +111,9 @@ def read_last_seen_from_gsheet():
 
 def write_current_seen_to_gsheet(df):
     """
-    直接把 DataFrame 轉成二維 list，並用一次性 ws.update() 完成整個表格更新，
-    避免批次 append_row 造成的 rate limit 問題。
+    將整個 DataFrame (hermes_data + 欄位) 一次性寫入 Sheet1。
+    先以 .clear() 清空，然後用 ws.update(...) 一次性寫入所有格子，
+    避免大量 append_row 而觸發 Google Sheets API rate limit。
     """
     print("==== 準備寫入 Google Sheets ====")
     print(df.head())
@@ -119,7 +129,6 @@ def write_current_seen_to_gsheet(df):
         ws.clear()
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
-        # 使用命名參數：先給 values，再給 range_name
         ws.update(values=all_values, range_name=cell_range)
         print("==== 已經寫入 Google Sheets ====")
     except Exception as e:
@@ -127,110 +136,119 @@ def write_current_seen_to_gsheet(df):
     finally:
         print("【Debug結束】write_current_seen_to_gsheet 執行到最後")
 
-# ===== 抓 Hermès 官網 =====
-hermes_data = []
-chrome_options = Options()
-chrome_options.add_argument("--headless")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
+# ===== 主流程：爬取 Hermès 官網 + 去重 + 通知 =====
+def main():
+    # 1. 用 Selenium 抓取 Hermès 官網的「包包&手拿包」與「小皮件」
+    hermes_data = []
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
 
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=chrome_options
+    )
 
-for cname, url in hermes_urls:
-    print(f"抓取 Hermès 分類: {cname}")
-    driver.get(url)
-    time.sleep(5)  # 等待頁面完整渲染
+    for cname, url in hermes_urls:
+        print(f"抓取 Hermès 分類: {cname}")
+        driver.get(url)
+        time.sleep(5)  # 等待整頁渲染完畢
 
-    # 同時尋找舊版與新版的商品容器
-    items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")
-    print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
+        # 同時支援舊版 (div.product-grid-list-item) 與新版 (div.product-grid-item)
+        items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")
+        print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
 
-    for item in items:
-        try:
-            raw_href = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
-            if raw_href.startswith("/"):
-                link = "https://www.hermes.com" + raw_href
-            else:
-                link = raw_href
+        for item in items:
+            try:
+                # 取 href，並補上完整協定
+                raw_href = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
+                if raw_href.startswith("/"):
+                    link = "https://www.hermes.com" + raw_href
+                else:
+                    link = raw_href
 
-            name = item.find_element(By.CSS_SELECTOR, ".product-item-name span").text.strip()
-            color = (
-                item.find_element(By.CSS_SELECTOR, ".product-item-colors")
-                .text.strip()
-                .replace("顏色:", "")
-                .strip()
+                name = item.find_element(By.CSS_SELECTOR, ".product-item-name span").text.strip()
+                color = (
+                    item.find_element(By.CSS_SELECTOR, ".product-item-colors")
+                        .text.strip()
+                        .replace("顏色:", "")
+                        .strip()
+                )
+            except Exception:
+                name = link = color = ""
+
+            try:
+                price = item.find_element(By.CSS_SELECTOR, ".price").text.strip()
+            except Exception:
+                price = ""
+
+            try:
+                raw_src = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
+                if raw_src.startswith("//"):
+                    img = "https:" + raw_src
+                else:
+                    img = raw_src
+            except Exception:
+                img = ""
+
+            hermes_data.append({
+                "source": f"Hermès官網 {cname}",
+                "name":   name,
+                "color":  color,
+                "price":  price,
+                "link":   link,
+                "img":    img,
+            })
+
+    driver.quit()
+
+    # 2. 將蒐到的資料塞進 DataFrame
+    df = pd.DataFrame(hermes_data)
+
+    # 3. 讀取 Google Sheets 上次已見 (name|price) 鍵值
+    last_set = read_last_seen_from_gsheet()
+
+    # 4. 逐筆比對：若 name|price 不在 last_set，就當作「新品/變價」
+    notify_list = []
+    new_keys = set()
+    for _, row in df.iterrows():
+        key = f"{row['name']}|{row['price']}"
+        if key not in last_set:
+            notify_list.append(
+                f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
             )
-        except Exception:
-            name = link = color = ""
+            new_keys.add(key)
 
-        try:
-            price = item.find_element(By.CSS_SELECTOR, ".price").text.strip()
-        except Exception:
-            price = ""
+    # 5. 如果這次沒有任何新品或變價，就直接把整張表寫回 Google Sheets 並結束
+    if not notify_list:
+        print("本次無新增或變價商品，跳過通知。")
+        write_current_seen_to_gsheet(df)
+        sys.exit(0)
 
-        try:
-            raw_src = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
-            if raw_src.startswith("//"):
-                img = "https:" + raw_src
-            else:
-                img = raw_src
-        except Exception:
-            img = ""
+    # 6. 先把剛要通知的鍵值加進 last_set_temp，避免同一筆在下一次又被算作「新貨」
+    last_set_temp = last_set.copy()
+    last_set_temp.update(new_keys)
 
-        hermes_data.append({
-            "source": f"Hermès官網 {cname}",
-            "name":   name,
-            "color":  color,
-            "price":  price,
-            "link":   link,
-            "img":    img,
-        })
-
-driver.quit()
-
-# ===== 合併資料並判斷「新品/變價」 =====
-df = pd.DataFrame(hermes_data)
-
-# 讀取 Google Sheets 上次已見 (name|price)
-last_set = read_last_seen_from_gsheet()
-
-# 比對：若 name|price 不在 last_set，就當作新品/變價，準備通知
-notify_list = []
-new_keys = set()
-for _, row in df.iterrows():
-    key = f"{row['name']}|{row['price']}"
-    if key not in last_set:
-        notify_list.append(
-            f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
-        )
-        new_keys.add(key)
-
-# 如果沒有新貨，就直接更新 Sheet，然後結束
-if not notify_list:
-    print("本次無新增或變價商品，跳過通知。")
+    # 7. 將整個 DataFrame 一次性寫回 Google Sheets（Sheet1）
     write_current_seen_to_gsheet(df)
-    sys.exit(0)
 
-# 先把「剛要通知的 key」暫時加入 last_set_temp，以避免重複通知
-last_set_temp = last_set.copy()
-last_set_temp.update(new_keys)
+    # 8. 合併通知文字
+    notify_msg = "\n\n".join(notify_list)
 
-# 將整個 DataFrame 內容一次性寫回 Google Sheets
-write_current_seen_to_gsheet(df)
+    # 9. 以 Broadcast 方式發送 LINE 訊息（給所有追蹤者）
+    if CHANNEL_ACCESS_TOKEN:
+        print("發送 LINE Broadcast 訊息")
+        send_line_broadcast_message(notify_msg)
 
-# 合併通知文字
-notify_msg = "\n\n".join(notify_list)
+    # 10. 以 Gmail 寄出通知
+    if GMAIL_USER:
+        print("發送 GMAIL")
+        send_gmail("Hermès 新上架／變價通知", notify_msg)
 
-# 使用 broadcast 方式發送 LINE 訊息
-if CHANNEL_CHANNEL_ACCESS_TOKEN := CHANNEL_ACCESS_TOKEN:  # 確保 Token 有設定
-    print("發送 LINE Broadcast 訊息")
-    send_line_broadcast_message(notify_msg)
+    print("只推播 Hermès 新品／變價商品（Broadcast + Google Sheets 記憶版）完成！")
 
-# 發送 GMAIL
-if GMAIL_USER:
-    print("發送 GMAIL")
-    send_gmail("Hermès 新上架／變價通知", notify_msg)
 
-print("只推播 Hermès 新品／變價商品（Broadcast + Google Sheets 記憶版）完成！")
+if __name__ == "__main__":
+    main()
+
