@@ -21,13 +21,13 @@ GMAIL_TO              = os.getenv("GMAIL_TO", "")
 GSHEET_ID             = os.getenv("GSHEET_ID", "")
 GOOGLE_CREDS_JSON     = os.getenv("GOOGLE_CREDS_JSON", "")
 
-# ===== 爬取 Hermès 官網 兩個分類 =====
+# ===== Hermès 官方網站 要爬的兩個分類 =====
 hermes_urls = [
     ("包包&手拿包", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/bags-and-clutches/"),
     ("小皮件",     "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/small-leather-goods/"),
 ]
 
-# ===== LINE Broadcast (推送給所有追蹤者)，並自動拆段超長文字 =====
+# ====== LINE Broadcast (推送給所有追蹤者)，並自動拆段超長文字 ======
 def send_line_broadcast_message(text):
     """
     以 broadcast 方式推播給所有追蹤此官方帳號的用戶。
@@ -65,12 +65,12 @@ def send_line_broadcast_message(text):
             time.sleep(0.5)
         return status_codes
 
-# ===== Gmail 通知 =====
+# ====== Gmail 通知 ======
 def send_gmail(subject, body):
     yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
     yag.send(GMAIL_TO, subject, body)
 
-# ===== Google Sheets 客戶端與讀寫 =====
+# ===== Google Sheets 客戶端與讀寫 ======
 def get_gsheet_client():
     """
     從環境變數 GOOGLE_CREDS_JSON 讀取 Service Account JSON，
@@ -90,7 +90,7 @@ def get_gsheet_client():
 def read_last_seen_from_gsheet():
     """
     開啟指定工作表 (GSHEET_ID)，讀取 Sheet1 的所有列，
-    將 'name|price' 組合放入 set 後回傳。
+    將 'name|color|price' 組合放入 set 後回傳。
     若失敗 (token 錯誤、網路問題)，就回傳空集合。
     """
     print("進入 read_last_seen_from_gsheet()")
@@ -102,7 +102,8 @@ def read_last_seen_from_gsheet():
         print(f"[讀取] Google Sheet 共 {len(data)} 筆")
         last_set = set()
         for row in data:
-            key = f"{row['name']}|{row['price']}"
+            # 由於我們要比對 name、color、price 三者，key 也改成三者串起來
+            key = f"{row.get('name','')}|{row.get('color','')}|{row.get('price','')}"
             last_set.add(key)
         return last_set
     except Exception as e:
@@ -122,7 +123,7 @@ def write_current_seen_to_gsheet(df):
         sh = client.open_by_key(GSHEET_ID)
         ws = sh.worksheet("Sheet1")
 
-        # DataFrame 轉成二維陣列：第一列放欄位名稱，之後每 row 為一筆資料
+        # DataFrame 轉成二維陣列：第一列放欄位名稱 (source, name, color, price, link, img)
         all_values = [df.columns.tolist()] + df.values.tolist()
 
         # 一次性清空 + 批次更新
@@ -203,17 +204,17 @@ def main():
 
     driver.quit()
 
-    # 2. 將蒐到的資料塞進 DataFrame
-    df = pd.DataFrame(hermes_data)
+    # 2. 將蒐到的資料塞進 DataFrame，順序記得要有 color 這一欄
+    df = pd.DataFrame(hermes_data, columns=["source","name","color","price","link","img"])
 
-    # 3. 讀取 Google Sheets 上次已見 (name|price) 鍵值
+    # 3. 讀取 Google Sheets 上次已見 (name|color|price) 鍵值
     last_set = read_last_seen_from_gsheet()
 
-    # 4. 逐筆比對：若 name|price 不在 last_set，就當作「新品/變價」
+    # 4. 逐筆比對：若 name|color|price 不在 last_set，就當作「新品/變價」
     notify_list = []
     new_keys = set()
     for _, row in df.iterrows():
-        key = f"{row['name']}|{row['price']}"
+        key = f"{row['name']}|{row['color']}|{row['price']}"
         if key not in last_set:
             notify_list.append(
                 f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
@@ -226,7 +227,7 @@ def main():
         write_current_seen_to_gsheet(df)
         sys.exit(0)
 
-    # 6. 先把剛要通知的鍵值加進 last_set_temp，避免同一筆在下一次又被算作「新貨」
+    # 6. 先把剛要通知的鍵值加進 last_set_temp，以避免同一筆在下一次又被算作「新貨」
     last_set_temp = last_set.copy()
     last_set_temp.update(new_keys)
 
@@ -251,4 +252,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
