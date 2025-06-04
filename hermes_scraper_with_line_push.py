@@ -6,12 +6,20 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import yagmail
 import gspread
 import json
 from google.oauth2.service_account import Credentials
+from fake_useragent import UserAgent
+import logging
+
+# 設定日誌記錄
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==== 環境變數 (GitHub Secrets 或本地 Export) ====
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -53,22 +61,26 @@ def send_line_broadcast_message(text):
     if len(text) <= MAX_LEN:
         payload = {"messages": [{"type": "text", "text": text}]}
         r = requests.post(url, headers=headers, json=payload)
-        print(f"LINE Broadcast 回應: {r.status_code} {r.text}")
+        logging.info(f"LINE Broadcast 回應: {r.status_code} {r.text}")
         return [r.status_code]
     else:
         status_codes = []
         for part in chunk_text(text):
             payload = {"messages": [{"type": "text", "text": part}]}
             r = requests.post(url, headers=headers, json=payload)
-            print(f"LINE Broadcast 拆段回應: {r.status_code} {r.text}")
+            logging.info(f"LINE Broadcast 拆段回應: {r.status_code} {r.text}")
             status_codes.append(r.status_code)
             time.sleep(0.5)
         return status_codes
 
 # ====== Gmail 通知 ======
 def send_gmail(subject, body):
-    yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
-    yag.send(GMAIL_TO, subject, body)
+    try:
+        yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
+        yag.send(GMAIL_TO, subject, body)
+        logging.info("Gmail 通知已發送")
+    except Exception as e:
+        logging.error(f"發送 Gmail 失敗: {e}")
 
 # ===== Google Sheets 客戶端與讀寫 ======
 def get_gsheet_client():
@@ -76,16 +88,20 @@ def get_gsheet_client():
     從環境變數 GOOGLE_CREDS_JSON 讀取 Service Account JSON，
     授權並返回 gspread client。
     """
-    print("進入 get_gsheet_client()")
-    creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    scopes = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.authorize(creds)
-    print("Google Sheets 驗證成功")
-    return client
+    logging.info("進入 get_gsheet_client()")
+    try:
+        creds_dict = json.loads(GOOGLE_CREDS_JSON)
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        logging.info("Google Sheets 驗證成功")
+        return client
+    except Exception as e:
+        logging.error(f"Google Sheets 驗證失敗: {e}")
+        raise
 
 def read_last_seen_from_gsheet():
     """
@@ -93,21 +109,20 @@ def read_last_seen_from_gsheet():
     將 'name|color|price' 組合放入 set 後回傳。
     若失敗 (token 錯誤、網路問題)，就回傳空集合。
     """
-    print("進入 read_last_seen_from_gsheet()")
+    logging.info("進入 read_last_seen_from_gsheet()")
     try:
         client = get_gsheet_client()
         sh = client.open_by_key(GSHEET_ID)
         ws = sh.worksheet("Sheet1")
         data = ws.get_all_records()
-        print(f"[讀取] Google Sheet 共 {len(data)} 筆")
+        logging.info(f"[讀取] Google Sheet 共 {len(data)} 筆")
         last_set = set()
         for row in data:
-            # 由於我們要比對 name、color、price 三者，key 也改成三者串起來
             key = f"{row.get('name','')}|{row.get('color','')}|{row.get('price','')}"
             last_set.add(key)
         return last_set
     except Exception as e:
-        print("GS read failed, fallback to empty set:", e)
+        logging.error(f"GS read failed, fallback to empty set: {e}")
         return set()
 
 def write_current_seen_to_gsheet(df):
@@ -116,26 +131,37 @@ def write_current_seen_to_gsheet(df):
     先以 .clear() 清空，然後用 ws.update(...) 一次性寫入所有格子，
     避免大量 append_row 而觸發 Google Sheets API rate limit。
     """
-    print("==== 準備寫入 Google Sheets ====")
-    print(df.head())
+    logging.info("==== 準備寫入 Google Sheets ====")
+    logging.debug(f"要寫入的 DataFrame 前幾行:\n{df.head()}")
     try:
         client = get_gsheet_client()
         sh = client.open_by_key(GSHEET_ID)
         ws = sh.worksheet("Sheet1")
 
-        # DataFrame 轉成二維陣列：第一列放欄位名稱 (source, name, color, price, link, img)
         all_values = [df.columns.tolist()] + df.values.tolist()
 
-        # 一次性清空 + 批次更新
         ws.clear()
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
         ws.update(values=all_values, range_name=cell_range)
-        print("==== 已經寫入 Google Sheets ====")
+        logging.info("==== 已經寫入 Google Sheets ====")
     except Exception as e:
-        print("寫入 Google Sheets 失敗:", e)
+        logging.error(f"寫入 Google Sheets 失敗: {e}")
     finally:
-        print("【Debug結束】write_current_seen_to_gsheet 執行到最後")
+        logging.info("【Debug結束】write_current_seen_to_gsheet 執行到最後")
+
+def get_element_with_wait(driver, by, value, timeout=10):
+    """使用 WebDriverWait 獲取元素，並處理超時異常"""
+    try:
+        return WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((by, value))
+        )
+    except TimeoutException:
+        logging.warning(f"找不到元素 (超時): {by}={value}")
+        return None
+    except NoSuchElementException:
+        logging.warning(f"找不到元素: {by}={value}")
+        return None
 
 # ===== 主流程：爬取 Hermès 官網 + 去重 + 通知 =====
 def main():
@@ -146,61 +172,73 @@ def main():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
 
+    # 設定 User-Agent
+    ua = UserAgent()
+    user_agent = ua.random
+    chrome_options.add_argument(f'--user-agent={user_agent}')
+    logging.info(f"使用的 User-Agent: {user_agent}")
+
+    # 阻止載入圖片
+    prefs = {"profile.managed_default_content_settings.images": 2}
+    chrome_options.add_experimental_option("prefs", prefs)
+    logging.info("已禁用圖片載入")
+
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=chrome_options
     )
 
     for cname, url in hermes_urls:
-        print(f"抓取 Hermès 分類: {cname}")
-        driver.get(url)
-        time.sleep(5)  # 等待整頁渲染完畢
+        logging.info(f"抓取 Hermès 分類: {cname} - {url}")
+        try:
+            driver.get(url)
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")))
+            time.sleep(2)  # 額外等待一下確保動態內容載入
+        except TimeoutException:
+            logging.error(f"載入 {url} 超時")
+            continue
 
-        # 同時支援舊版 (div.product-grid-list-item) 與新版 (div.product-grid-item)
         items = driver.find_elements(By.CSS_SELECTOR, "div.product-grid-list-item, div.product-grid-item")
-        print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
+        logging.info(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
 
         for item in items:
+            link = name = color = price = img = ""
             try:
-                # 取 href，並補上完整協定
-                raw_href = item.find_element(By.CSS_SELECTOR, ".product-item-name").get_attribute("href")
-                if raw_href.startswith("/"):
-                    link = "https://www.hermes.com" + raw_href
-                else:
-                    link = raw_href
+                name_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name span")
+                if name_element:
+                    name = name_element.text.strip()
 
-                name = item.find_element(By.CSS_SELECTOR, ".product-item-name span").text.strip()
-                color = (
-                    item.find_element(By.CSS_SELECTOR, ".product-item-colors")
-                        .text.strip()
-                        .replace("顏色:", "")
-                        .strip()
-                )
-            except Exception:
-                name = link = color = ""
+                link_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name", timeout=5)
+                if link_element:
+                    raw_href = link_element.get_attribute("href")
+                    link = "https://www.hermes.com" + raw_href if raw_href.startswith("/") else raw_href
 
-            try:
-                price = item.find_element(By.CSS_SELECTOR, ".price").text.strip()
-            except Exception:
-                price = ""
+                color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=3)
+                if color_element:
+                    color = color_element.text.strip().replace("顏色:", "").strip()
 
-            try:
-                raw_src = item.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
-                if raw_src.startswith("//"):
-                    img = "https:" + raw_src
-                else:
-                    img = raw_src
-            except Exception:
-                img = ""
+                price_element = get_element_with_wait(item, By.CSS_SELECTOR, ".price", timeout=3)
+                if price_element:
+                    price = price_element.text.strip()
 
-            hermes_data.append({
-                "source": f"Hermès官網 {cname}",
-                "name":   name,
-                "color":  color,
-                "price":  price,
-                "link":   link,
-                "img":    img,
-            })
+                img_element = get_element_with_wait(item, By.CSS_SELECTOR, "img", timeout=3)
+                if img_element:
+                    raw_src = img_element.get_attribute("src")
+                    img = "https:" + raw_src if raw_src.startswith("//") else raw_src
+
+            except Exception as e:
+                logging.error(f"處理商品時發生錯誤: {e}")
+                continue
+
+            if name and link:
+                hermes_data.append({
+                    "source": f"Hermès官網 {cname}",
+                    "name":   name,
+                    "color":  color,
+                    "price":  price,
+                    "link":   link,
+                    "img":    img,
+                })
 
     driver.quit()
 
@@ -223,7 +261,7 @@ def main():
 
     # 5. 如果這次沒有任何新品或變價，就直接把整張表寫回 Google Sheets 並結束
     if not notify_list:
-        print("本次無新增或變價商品，跳過通知。")
+        logging.info("本次無新增或變價商品，跳過通知。")
         write_current_seen_to_gsheet(df)
         sys.exit(0)
 
@@ -239,15 +277,19 @@ def main():
 
     # 9. 以 Broadcast 方式發送 LINE 訊息（給所有追蹤者）
     if CHANNEL_ACCESS_TOKEN:
-        print("發送 LINE Broadcast 訊息")
+        logging.info("發送 LINE Broadcast 訊息")
         send_line_broadcast_message(notify_msg)
 
     # 10. 以 Gmail 寄出通知
-    if GMAIL_USER:
-        print("發送 GMAIL")
+    if GMAIL_USER and GMAIL_TO and GMAIL_APP_PASSWORD:
+        logging.info("發送 GMAIL 通知")
         send_gmail("Hermès 新上架／變價通知", notify_msg)
+    elif GMAIL_USER:
+        logging.warning("GMAIL_TO 或 GMAIL_APP_PASSWORD 未設定，跳過 GMAIL 通知")
+    else:
+        logging.warning("GMAIL_USER 未設定，跳過 GMAIL 通知")
 
-    print("只推播 Hermès 新品／變價商品（Broadcast + Google Sheets 記憶版）完成！")
+    logging.info("只推播 Hermès 新品／變價商品（Broadcast + Google Sheets 記憶版）完成！")
 
 
 if __name__ == "__main__":
