@@ -19,7 +19,7 @@ from fake_useragent import UserAgent
 import logging
 
 # 設定日誌記錄
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ==== 環境變數 (GitHub Secrets 或本地 Export) ====
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -174,14 +174,22 @@ def normalize_price(price_str):
 def extract_color(item):
     """嘗試多種方法提取顏色資訊"""
     color = ""
-    color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=2)
-    if color_element:
-        color = color_element.text.strip().replace("顏色:", "").strip()
-        return color
-
+    # Try targeting div with ng-reflect-text first
     color_element_ng_reflect = get_element_with_wait(item, By.CSS_SELECTOR, "div[ng-reflect-text]", timeout=2)
     if color_element_ng_reflect:
         color = color_element_ng_reflect.text.strip()
+        return color
+
+    # Then try targeting div with _ngcontent-hermes-c attribute
+    color_element_ngcontent = get_element_with_wait(item, By.CSS_SELECTOR, "div[_ngcontent-hermes-c]", timeout=2)
+    if color_element_ngcontent:
+        color = color_element_ngcontent.text.strip()
+        return color
+
+    # Finally, try the original selector
+    color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=2)
+    if color_element:
+        color = color_element.text.strip().replace("顏色:", "").strip()
         return color
 
     return color
