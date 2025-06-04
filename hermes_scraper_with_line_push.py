@@ -192,7 +192,7 @@ def main():
         for item in items:
             link = name = color = price = img = ""
             try:
-                name_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name span")
+                name_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name span.paragraph-medium")
                 if name_element:
                     name = name_element.text.strip()
                 link_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name", timeout=5)
