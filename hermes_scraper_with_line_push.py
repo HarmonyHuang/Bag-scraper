@@ -122,7 +122,7 @@ def read_last_seen_from_gsheet():
             last_set.add(key)
         return last_set
     except Exception as e:
-        logging.error(f"GS read failed, fallback to empty set: {e}")
+        logging.error(f"GS read failed: {e}", exc_info=True) # 記錄更詳細的錯誤堆疊
         return set()
 
 def write_current_seen_to_gsheet(df):
@@ -162,6 +162,10 @@ def get_element_with_wait(driver, by, value, timeout=10):
     except NoSuchElementException:
         logging.warning(f"找不到元素: {by}={value}")
         return None
+
+def normalize_price(price_str):
+    """提取價格字串中的數字部分"""
+    return ''.join(filter(str.isdigit, price_str))
 
 # ===== 主流程：爬取 Hermès 官網 + 去重 + 通知 =====
 def main():
@@ -252,12 +256,16 @@ def main():
     notify_list = []
     new_keys = set()
     for _, row in df.iterrows():
-        key = f"{row['name']}|{row['color']}|{row['price']}"
+        key = f"{row['name']}|{row['color']}|{normalize_price(row['price'])}"
         if key not in last_set:
+            logging.info(f"發現新商品/變價：{key}")
+            logging.debug(f"last_set 內容：{last_set}")
             notify_list.append(
                 f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}"
             )
             new_keys.add(key)
+        else:
+            logging.debug(f"商品已存在，跳過通知：{key}")
 
     # 5. 如果這次沒有任何新品或變價，就直接把整張表寫回 Google Sheets 並結束
     if not notify_list:
