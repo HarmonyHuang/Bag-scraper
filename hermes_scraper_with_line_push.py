@@ -145,20 +145,8 @@ def normalize_price(price_str):
     return ''.join(filter(str.isdigit, price_str))
 
 def extract_color(item):
-    color = ""
-    color_element_by_class = get_element_with_wait(item, By.CSS_SELECTOR, "span.product-item-colors", timeout=2)
-    if color_element_by_class:
-        color = color_element_by_class.text.strip().replace("顏色:", "").strip()
-        return color
-    color_element_ng_reflect = get_element_with_wait(item, By.CSS_SELECTOR, "div[ng-reflect-text]", timeout=2)
-    if color_element_ng_reflect:
-        color = color_element_ng_reflect.text.strip()
-        return color
-    color_element_ngcontent = get_element_with_wait(item, By.CSS_SELECTOR, "div[_ngcontent-hermes-c]", timeout=2)
-    if color_element_ngcontent:
-        color = color_element_ngcontent.text.strip()
-        return color
-    return color
+    """不再提取顏色資訊，直接返回空字串"""
+    return ""
 
 def main():
     hermes_data = []
@@ -192,7 +180,7 @@ def main():
         for item in items:
             link = name = color = price = img = ""
             try:
-                name_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name span.paragraph-medium")
+                name_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name span")
                 if name_element:
                     name = name_element.text.strip()
                 link_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-name", timeout=5)
