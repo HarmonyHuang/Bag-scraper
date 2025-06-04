@@ -192,6 +192,9 @@ def main():
         options=chrome_options
     )
 
+    # 設置頁面載入超時時間
+    driver.set_page_load_timeout(30)
+
     for cname, url in hermes_urls:
         logging.info(f"抓取 Hermès 分類: {cname} - {url}")
         try:
