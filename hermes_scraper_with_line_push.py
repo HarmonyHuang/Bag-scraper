@@ -147,7 +147,7 @@ def write_current_seen_to_gsheet(df):
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
         logging.info(f"正在寫入資料到 Google Sheet，範圍：{cell_range}...")
-        ws.update(values=all_values, values=all_values, range_name=cell_range) # 修正重複的 values
+        ws.update(values=all_values, range_name=cell_range) # 修正重複的 values
         logging.info("==== 已經寫入 Google Sheets ====")
     except Exception as e:
         logging.error(f"寫入 Google Sheets 失敗: {e}", exc_info=True)
