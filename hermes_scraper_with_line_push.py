@@ -146,18 +146,30 @@ def normalize_price(price_str):
 
 def extract_color(item):
     color = ""
+    # Try targeting span with class containing 'color'
+    color_element_by_class = get_element_with_wait(item, By.CSS_SELECTOR, "span[class*='color']", timeout=2)
+    if color_element_by_class:
+        color = color_element_by_class.text.strip()
+        return color
+
+    # Try targeting div with ng-reflect-text
     color_element_ng_reflect = get_element_with_wait(item, By.CSS_SELECTOR, "div[ng-reflect-text]", timeout=2)
     if color_element_ng_reflect:
         color = color_element_ng_reflect.text.strip()
         return color
+
+    # Try targeting div with _ngcontent-hermes-c attribute
     color_element_ngcontent = get_element_with_wait(item, By.CSS_SELECTOR, "div[_ngcontent-hermes-c]", timeout=2)
     if color_element_ngcontent:
         color = color_element_ngcontent.text.strip()
         return color
+
+    # Finally, try the original selector
     color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=2)
     if color_element:
         color = color_element.text.strip().replace("顏色:", "").strip()
         return color
+
     return color
 
 def main():
