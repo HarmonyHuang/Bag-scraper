@@ -351,4 +351,4 @@ def main():
                                 link = "https://" + raw_href
                             else:
                                 link = raw_href
-                        else
+                        else:
