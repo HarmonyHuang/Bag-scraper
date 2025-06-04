@@ -250,6 +250,12 @@ def main():
                     raw_src = img_element.get_attribute("src")
                     img = "https:" + raw_src if raw_src.startswith("//") else raw_src
 
+                logging.debug(f"正在處理商品：{name}")
+                logging.debug(f"  連結：{link}")
+                logging.debug(f"  顏色：{color}")
+                logging.debug(f"  價格：{price}")
+                logging.debug(f"  圖片連結：{img}")
+
             except Exception as e:
                 logging.error(f"處理商品時發生錯誤: {e}")
                 continue
