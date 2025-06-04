@@ -140,13 +140,17 @@ def write_current_seen_to_gsheet(df):
 
         all_values = [df.columns.tolist()] + df.values.tolist()
 
+        logging.info("正在清空 Google Sheet...")
         ws.clear()
+        logging.info("Google Sheet 已清空。")
+
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
-        ws.update(values=all_values, range_name=cell_range)
+        logging.info(f"正在寫入資料到 Google Sheet，範圍：{cell_range}...")
+        ws.update(values=all_values, values=all_values, range_name=cell_range) # 修正重複的 values
         logging.info("==== 已經寫入 Google Sheets ====")
     except Exception as e:
-        logging.error(f"寫入 Google Sheets 失敗: {e}")
+        logging.error(f"寫入 Google Sheets 失敗: {e}", exc_info=True)
     finally:
         logging.info("【Debug結束】write_current_seen_to_gsheet 執行到最後")
 
@@ -273,6 +277,7 @@ def main():
     # 5. 如果這次沒有任何新品或變價，就直接把整張表寫回 Google Sheets 並結束
     if not notify_list:
         logging.info("本次無新增或變價商品，跳過通知。")
+        logging.debug(f"準備寫入 Google Sheet 的 DataFrame:\n{df}")
         write_current_seen_to_gsheet(df)
         sys.exit(0)
 
@@ -281,6 +286,7 @@ def main():
     last_set_temp.update(new_keys)
 
     # 7. 將整個 DataFrame 一次性寫回 Google Sheets（Sheet1）
+    logging.debug(f"準備寫入 Google Sheet 的 DataFrame:\n{df}")
     write_current_seen_to_gsheet(df)
 
     # 8. 合併通知文字
