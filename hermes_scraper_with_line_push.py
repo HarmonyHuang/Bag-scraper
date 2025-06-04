@@ -147,7 +147,7 @@ def write_current_seen_to_gsheet(df):
         max_row = len(all_values)
         cell_range = f"A1:F{max_row}"
         logging.info(f"正在寫入資料到 Google Sheet，範圍：{cell_range}...")
-        ws.update(values=all_values, range_name=cell_range) # 修正重複的 values
+        ws.update(values=all_values, range_name=cell_range)
         logging.info("==== 已經寫入 Google Sheets ====")
     except Exception as e:
         logging.error(f"寫入 Google Sheets 失敗: {e}", exc_info=True)
@@ -170,6 +170,21 @@ def get_element_with_wait(driver, by, value, timeout=10):
 def normalize_price(price_str):
     """提取價格字串中的數字部分"""
     return ''.join(filter(str.isdigit, price_str))
+
+def extract_color(item):
+    """嘗試多種方法提取顏色資訊"""
+    color = ""
+    color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=2)
+    if color_element:
+        color = color_element.text.strip().replace("顏色:", "").strip()
+        return color
+
+    color_element_ng_reflect = get_element_with_wait(item, By.CSS_SELECTOR, "div[ng-reflect-text]", timeout=2)
+    if color_element_ng_reflect:
+        color = color_element_ng_reflect.text.strip()
+        return color
+
+    return color
 
 # ===== 主流程：爬取 Hermès 官網 + 去重 + 通知 =====
 def main():
@@ -224,9 +239,7 @@ def main():
                     raw_href = link_element.get_attribute("href")
                     link = "https://www.hermes.com" + raw_href if raw_href.startswith("/") else raw_href
 
-                color_element = get_element_with_wait(item, By.CSS_SELECTOR, ".product-item-colors", timeout=3)
-                if color_element:
-                    color = color_element.text.strip().replace("顏色:", "").strip()
+                color = extract_color(item)
 
                 price_element = get_element_with_wait(item, By.CSS_SELECTOR, ".price", timeout=3)
                 if price_element:
@@ -254,6 +267,7 @@ def main():
     driver.quit()
 
     # 2. 將蒐到的資料塞進 DataFrame，順序記得要有 color 這一欄
+    logging.debug(f"爬取到的原始資料 hermes_data: {hermes_data}")
     df = pd.DataFrame(hermes_data, columns=["source","name","color","price","link","img"])
 
     # 3. 讀取 Google Sheets 上次已見 (name|color|price) 鍵值
