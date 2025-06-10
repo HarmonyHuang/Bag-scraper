@@ -148,6 +148,8 @@ def main():
     hash_list = []
     for _, row in df.iterrows():
         hash_val = make_item_hash(row["name"], row["color"], row["price"])
+        print("🔍 比對項目：", row["name"], row["color"], row["price"])
+        print("👉 產生 hash：", hash_val)
         hash_list.append(hash_val)
         if hash_val not in last_set:
             notify_list.append(f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}")
