@@ -28,6 +28,9 @@ hermes_urls = [
 ]
 
 def make_item_hash(name, color, price):
+    name = name or ""
+    color = color or ""
+    price = price or ""
     raw = f"{name.strip()}|{color.strip()}|{price.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -86,13 +89,15 @@ def write_current_seen_to_gsheet(df):
         client = get_gsheet_client()
         sh = client.open_by_key(GSHEET_ID)
         ws = sh.worksheet("Sheet1")
-        df["hash"] = df.apply(lambda row: make_item_hash(row["name"], row["color"], row["price"]), axis=1)
         all_values = [df.columns.tolist()] + df.values.tolist()
         ws.clear()
         cell_range = f"A1:G{len(all_values)}"
         ws.update(values=all_values, range_name=cell_range)
     except Exception as e:
         print("寫入 Google Sheets 失敗:", e)
+        # 備份到本地 JSON
+        df.to_json("backup_seen_items.json", orient="records", force_ascii=False, indent=2)
+        print("已備份至 backup_seen_items.json")
     finally:
         print("【Debug結束】write_current_seen_to_gsheet 執行到最後")
 
@@ -140,29 +145,22 @@ def main():
 
     driver.quit()
     df = pd.DataFrame(hermes_data, columns=["source", "name", "color", "price", "link", "img"])
+    df["hash"] = df.apply(lambda row: make_item_hash(row["name"], row["color"], row["price"]), axis=1)
 
-    last_set = read_last_seen_from_gsheet()
-
+    last_seen = read_last_seen_from_gsheet()
     notify_list = []
-    new_hashes = set()
-    hash_list = []
-    for _, row in df.iterrows():
-        hash_val = make_item_hash(row["name"], row["color"], row["price"])
-        print("🔍 比對項目：", row["name"], row["color"], row["price"])
-        print("👉 產生 hash：", hash_val)
-        hash_list.append(hash_val)
-        if hash_val not in last_set:
-            notify_list.append(f"[{row['source']}]\n{row['name']} {row.get('color','')} {row['price']}\n{row['link']}")
-            new_hashes.add(hash_val)
+    seen_this_time = set()
 
-    df["hash"] = hash_list
+    for _, row in df.iterrows():
+        h = row["hash"]
+        if h not in last_seen:
+            notify_list.append(f"[{row['source']}]\n{row['name']} {row['color']} {row['price']}\n{row['link']}")
+            seen_this_time.add(h)
 
     if not notify_list:
-        print("本次無新增或變價商品，跳過通知。")
-        write_current_seen_to_gsheet(df)
-        sys.exit(0)
+        print("✅ 無新品，跳過通知。")
+        return
 
-    write_current_seen_to_gsheet(df)
     notify_msg = "\n\n".join(notify_list)
 
     if CHANNEL_ACCESS_TOKEN:
@@ -171,7 +169,8 @@ def main():
     if GMAIL_USER:
         send_gmail("Hermès 新上架／變價通知", notify_msg)
 
-    print("Hermès 爬蟲完成，通知已發送。")
+    write_current_seen_to_gsheet(df)
+    print("✅ Hermès 通知完成並寫入 Google Sheets。")
 
 if __name__ == "__main__":
     main()
