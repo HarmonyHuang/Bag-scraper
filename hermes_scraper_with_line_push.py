@@ -17,6 +17,7 @@ from google.oauth2.service_account import Credentials
 
 # 環境變數
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_USER_IDS = os.getenv("LINE_USER_IDS", os.getenv("LINE_USER_ID", "")).split(",")
 GMAIL_USER = os.getenv("GMAIL_USER", "")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 GMAIL_TO = os.getenv("GMAIL_TO", "")
@@ -32,12 +33,12 @@ def make_item_hash(name, color, price):
     raw = f"{(name or '').strip()}|{(color or '').strip()}|{(price or '').strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-def send_line_broadcast_message(text):
-    url = "https://api.line.me/v2/bot/message/broadcast"
+def send_line_multicast_message(user_ids, text):
+    url = "https://api.line.me/v2/bot/message/multicast"
     headers = {"Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"}
-    payload = {"messages": [{"type": "text", "text": text}]}
+    payload = {"to": [uid for uid in user_ids if uid], "messages": [{"type": "text", "text": text}]}
     r = requests.post(url, headers=headers, json=payload)
-    print("LINE Broadcast:", r.status_code, r.text)
+    print("LINE Multicast:", r.status_code, r.text)
 
 
 def send_gmail(subject, body):
@@ -56,8 +57,7 @@ def get_gsheet_client():
 def read_last_seen_from_gsheet():
     try:
         ws = get_gsheet_client().open_by_key(GSHEET_ID).worksheet("Sheet1")
-        data = ws.get_all_records()
-        return {row.get('hash') for row in data if row.get('hash')}
+        return {row.get('hash') for row in ws.get_all_records() if row.get('hash')}
     except Exception as e:
         print("GS read error:", e)
         return set()
@@ -138,8 +138,9 @@ def main():
         return
 
     msg = "\n\n".join(notify_list)
-    if CHANNEL_ACCESS_TOKEN:
-        send_line_broadcast_message(msg)
+
+    if CHANNEL_ACCESS_TOKEN and LINE_USER_IDS:
+        send_line_multicast_message(LINE_USER_IDS, msg)
     if GMAIL_USER:
         send_gmail("Hermès 新上架/變價通知", msg)
 
