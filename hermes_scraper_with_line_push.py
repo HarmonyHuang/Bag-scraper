@@ -14,6 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 from google.oauth2.service_account import Credentials
 
@@ -56,6 +57,7 @@ def send_line_multicast_message(user_ids, text):
 
 def send_gmail(subject, body):
     yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
+    # 同時寄給 GMAIL_TO 與 queeniechu.qc@gmail.com
     yag.send([GMAIL_TO, 'queeniechu.qc@gmail.com'], subject, body)
 
 def get_gsheet_client():
@@ -81,12 +83,14 @@ def write_current_seen_to_gsheet(df):
         ws.update('A1', values)
     except Exception as e:
         print('GS write error:', e)
+        # 備份到本地 JSON
         df.to_json('backup_seen_items.json', force_ascii=False, indent=2)
         print('已備份至 backup_seen_items.json')
 
 # ==== Hermes 動態爬蟲 ====
 def scrape_hermes():
     data = []
+
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
@@ -97,17 +101,27 @@ def scrape_hermes():
         service=Service(ChromeDriverManager().install()),
         options=chrome_options
     )
+    driver.implicitly_wait(5)
     wait = WebDriverWait(driver, 10)
 
     for cname, url in hermes_urls:
         print(f'抓取 Hermes 分類：{cname}')
         driver.get(url)
-        wait.until(EC.presence_of_all_elements_located(
-            (By.CSS_SELECTOR, 'div.product-grid-list-item, div.product-grid-item')
-        ))
-        items = driver.find_elements(
-            By.CSS_SELECTOR, 'div.product-grid-list-item, div.product-grid-item'
-        )
+
+        try:
+            wait.until(EC.presence_of_all_elements_located(
+                (By.CSS_SELECTOR, 'div.product-grid-list-item, div.product-grid-item')
+            ))
+            items = driver.find_elements(
+                By.CSS_SELECTOR, 'div.product-grid-list-item, div.product-grid-item'
+            )
+        except TimeoutException:
+            print(f'⚠️ {cname} 顯式等待逾時，改用隱式等待直接抓取')
+            items = driver.find_elements(
+                By.CSS_SELECTOR, 'div.product-grid-list-item, div.product-grid-item'
+            )
+
+        print(f'► 抓到 {len(items)} 件 {cname}')
         for item in items:
             try:
                 raw_href = item.find_element(By.CSS_SELECTOR, '.product-item-name') \
@@ -176,7 +190,7 @@ def main():
         print('❌ 未抓到任何資料')
         return
 
-    df = pd.DataFrame(all_data)
+    df = pd.DataFrame(all_data, columns=['source','name','color','price','link','img'])
     df['hash'] = df.apply(lambda r: make_item_hash(r['name'], r['color'], r['price']), axis=1)
 
     last_seen = read_last_seen_from_gsheet()
