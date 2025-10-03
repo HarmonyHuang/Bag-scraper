@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: hermes-scraper-${{ github.ref }}
-  cancel-in-progress: true
+  group: hermes-scraper-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -52,3 +52,4 @@ jobs:
           GOOGLE_CREDS_JSON:         ${{ secrets.GOOGLE_CREDS_JSON }}
         run: |
           python hermes_scraper_with_line_push.py
+
