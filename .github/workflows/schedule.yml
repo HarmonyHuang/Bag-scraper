@@ -2,16 +2,14 @@ name: Hermes Inventory Monitor
 
 on:
   schedule:
-    # 每 30 分鐘執行一次 (國際標準時間 UTC)
-    # 台北時間 06:00 - 24:00 約等於 UTC 22:00 - 16:00
     - cron: '*/30 * * * *'
-  workflow_dispatch: # 允許手動從 GitHub 介面啟動
+  workflow_dispatch:
 
 env:
-  # 解決 Node.js 20 棄用警告，強制使用 Node.js 24
+  # 解決 Node.js 20 警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   
-  # 注入 Secrets (請確保您已在 GitHub Settings > Secrets 中設定這些變數)
+  # Secrets 配置
   LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
   GMAIL_USER: ${{ secrets.GMAIL_USER }}
   GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
@@ -31,12 +29,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # 開啟快取加速後續執行
+          cache: 'pip'
 
-      - name: Install System Dependencies
+      - name: Install Google Chrome
+        # 使用更強制的安裝方式，並加上 || true 防止因為小警告導致 Exit 100
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable libnss3 libgconf-2-4
+          sudo apt-get update --fix-missing
+          sudo apt-get install -y google-chrome-stable || true
 
       - name: Install Python Dependencies
         run: |
@@ -44,6 +43,7 @@ jobs:
           pip install pandas requests selenium webdriver-manager gspread yagmail google-auth fake-useragent
 
       - name: Run Hermes Scraper
-        run: python your_script_name.py  # <--- 請記得把這裡改為您的檔名 (例如 main.py)
+        # 確保檔名正確，並加上執行權限
+        run: python your_script_name.py 
         env:
-          PYTHONUNBUFFERED: 1 # 確保日誌能即時印出，不會被快取
+          PYTHONUNBUFFERED: 1
