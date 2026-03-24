@@ -44,6 +44,6 @@ jobs:
 
       - name: Run Hermes Scraper
         # 確保檔名正確，並加上執行權限
-        run: python your_script_name.py 
+        run: python hermes_scraper_with_line_push.py
         env:
           PYTHONUNBUFFERED: 1
