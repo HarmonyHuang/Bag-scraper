@@ -54,11 +54,12 @@ GMAIL_TO = os.getenv("GMAIL_TO", "")
 GSHEET_ID = os.getenv("GSHEET_ID", "")
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON", "")
 
-# ===== Hermès 官方網站 要爬的兩個分類 =====
+# ===== Hermès 官方網站新版分類 =====
 HERMES_URLS = [
-    ("包包&手拿包", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/bags-and-clutches/"),
-    ("小皮件", "https://www.hermes.com/tw/zh/category/women/bags-and-small-leather-goods/small-leather-goods/"),
+    ("包包&手拿包", "https://www.hermes.com/tw/zh/category/leather-goods/bags-and-clutches/womens-bags-and-clutches/"),
+    ("小皮件", "https://www.hermes.com/tw/zh/category/leather-goods/small-leather-goods/womens-small-leather-goods/"),
 ]
+
 
 # ===================== 共用工具 =====================
 
@@ -141,6 +142,7 @@ def make_id_key(link: str, name: str, color: str) -> str:
 
     return f"text:{normalize_text(name)}|{normalize_text(color)}"
 
+
 # ===================== 通知：LINE / Gmail =====================
 
 def _chunk_by_bytes(text: str, max_bytes: int = LINE_MAX_BYTES) -> List[str]:
@@ -208,6 +210,7 @@ def send_gmail(subject: str, body: str) -> bool:
         print("Gmail 寄送失敗：", repr(e))
         return False
 
+
 # ===================== Google Sheets 工具 =====================
 
 def get_gsheet_client() -> gspread.Client:
@@ -221,11 +224,7 @@ def get_gsheet_client() -> gspread.Client:
 
     print("進入 get_gsheet_client()")
 
-    try:
-        creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    except Exception as e:
-        raise RuntimeError(f"GOOGLE_CREDS_JSON 不是合法 JSON: {repr(e)}") from e
-
+    creds_dict = json.loads(GOOGLE_CREDS_JSON)
     creds = Credentials.from_service_account_info(creds_dict, scopes=GSHEETS_SCOPE)
     _GS_CLIENT = gspread.authorize(creds)
 
@@ -261,11 +260,7 @@ def write_current_seen_to_gsheet(df: pd.DataFrame):
 
     try:
         client = get_gsheet_client()
-        print("open_by_key 前，GSHEET_ID =", GSHEET_ID)
-
         sh = client.open_by_key(GSHEET_ID)
-        print("成功打開 spreadsheet")
-
         ws = _ensure_sheet1(sh)
 
         if df.empty:
@@ -328,20 +323,33 @@ def append_seen_prices(pairs: List[Tuple[str, str]]) -> bool:
         print("追加 Seen 失敗：", repr(e))
         return False
 
+
 # ===================== Selenium 幫手 =====================
 
 def _wait_for_item_list(driver, timeout: int = 20) -> None:
-    selector = "div.product-grid-item, div.product-grid-list-item, li.product-grid-item"
-    WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-    )
+    selectors = [
+        "div.product-grid-item",
+        "div.product-grid-list-item",
+        "li.product-grid-item",
+        "[data-test='product-grid-item']",
+        "article",
+    ]
+    for sel in selectors:
+        try:
+            WebDriverWait(driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, sel))
+            )
+            return
+        except Exception:
+            pass
+    raise TimeoutException("找不到商品清單元素")
 
-def _scroll_to_load_all(driver, max_rounds: int = 20, pause: float = 0.8) -> None:
-    selector = "div.product-grid-item, div.product-grid-list-item, li.product-grid-item"
+def _scroll_to_load_all(driver, max_rounds: int = 20, pause: float = 1.0) -> None:
+    selectors = "div.product-grid-item, div.product-grid-list-item, li.product-grid-item, [data-test='product-grid-item'], article"
     last_count = -1
 
     for _ in range(max_rounds):
-        items = driver.find_elements(By.CSS_SELECTOR, selector)
+        items = driver.find_elements(By.CSS_SELECTOR, selectors)
         count = len(items)
 
         if count == last_count:
@@ -350,6 +358,7 @@ def _scroll_to_load_all(driver, max_rounds: int = 20, pause: float = 0.8) -> Non
         last_count = count
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(pause)
+
 
 # ===================== 爬取 Hermes =====================
 
@@ -360,7 +369,7 @@ def scrape_hermes() -> pd.DataFrame:
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1366,1000")
+    chrome_options.add_argument("--window-size=1366,1200")
     chrome_options.add_argument(
         "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -381,66 +390,101 @@ def scrape_hermes() -> pd.DataFrame:
             try:
                 _wait_for_item_list(driver, timeout=20)
             except TimeoutException:
-                print("⚠️ 等待商品清單逾時，改為固定等待 5 秒")
-                time.sleep(5)
+                print("⚠️ 等待商品清單逾時，改為固定等待 8 秒")
+                time.sleep(8)
 
             _scroll_to_load_all(driver)
 
-            selector = "div.product-grid-item, div.product-grid-list-item, li.product-grid-item"
-            items = driver.find_elements(By.CSS_SELECTOR, selector)
+            item_selectors = [
+                "div.product-grid-item",
+                "div.product-grid-list-item",
+                "li.product-grid-item",
+                "[data-test='product-grid-item']",
+                "article",
+            ]
+
+            items = []
+            for sel in item_selectors:
+                items = driver.find_elements(By.CSS_SELECTOR, sel)
+                if items:
+                    print(f"使用 selector: {sel}")
+                    break
+
             print(f"► 本次共抓到 {len(items)} 件 Hermès 「{cname}」")
 
             for it in items:
                 name = color = price = link = img = ""
 
-                try:
-                    name_el = it.find_element(By.CSS_SELECTOR, ".product-item-name, a.product-item-name")
-                    link = name_el.get_attribute("href") or ""
-                    if link.startswith("/"):
-                        link = "https://www.hermes.com" + link
-
-                    name = (name_el.text or "").strip()
-                    if not name:
-                        try:
-                            name = name_el.find_element(By.CSS_SELECTOR, "span").text.strip()
-                        except Exception:
-                            pass
-
-                except NoSuchElementException:
-                    pass
-                except StaleElementReferenceException:
+                # 連結/名稱
+                link_selectors = [
+                    ".product-item-name",
+                    "a.product-item-name",
+                    "a[href*='-p-']",
+                    "a",
+                ]
+                for sel in link_selectors:
                     try:
-                        name = it.text.strip()
+                        name_el = it.find_element(By.CSS_SELECTOR, sel)
+                        link = name_el.get_attribute("href") or ""
+                        if link and link.startswith("/"):
+                            link = "https://www.hermes.com" + link
+
+                        if not name:
+                            name = (name_el.text or "").strip()
+                        if not name:
+                            try:
+                                name = name_el.find_element(By.CSS_SELECTOR, "span").text.strip()
+                            except Exception:
+                                pass
+                        if link:
+                            break
                     except Exception:
                         pass
 
-                try:
-                    color = it.find_element(By.CSS_SELECTOR, ".product-item-colors").text.strip()
-                except Exception:
-                    color = ""
-
-                for sel_price in (".price", "[itemprop='price']", "span.price"):
-                    if price:
-                        break
+                # 顏色
+                color_selectors = [
+                    ".product-item-colors",
+                    "[class*='color']",
+                ]
+                for sel in color_selectors:
                     try:
-                        price = it.find_element(By.CSS_SELECTOR, sel_price).text.strip()
+                        color = it.find_element(By.CSS_SELECTOR, sel).text.strip()
+                        if color:
+                            break
                     except Exception:
                         pass
 
+                # 價格
+                price_selectors = [
+                    ".price",
+                    "[itemprop='price']",
+                    "span.price",
+                    "[class*='price']",
+                ]
+                for sel in price_selectors:
+                    try:
+                        price = it.find_element(By.CSS_SELECTOR, sel).text.strip()
+                        if price:
+                            break
+                    except Exception:
+                        pass
+
+                # 圖片
                 try:
                     raw_src = it.find_element(By.CSS_SELECTOR, "img").get_attribute("src") or ""
                     img = ("https:" + raw_src) if raw_src.startswith("//") else raw_src
                 except Exception:
                     img = ""
 
-                hermes_data.append({
-                    "source": f"Hermès官網 {cname}",
-                    "name": name,
-                    "color": color,
-                    "price": price,
-                    "link": link,
-                    "img": img,
-                })
+                if name or link:
+                    hermes_data.append({
+                        "source": f"Hermès官網 {cname}",
+                        "name": name,
+                        "color": color,
+                        "price": price,
+                        "link": link,
+                        "img": img,
+                    })
 
     except WebDriverException as e:
         print("Chrome / WebDriver 啟動失敗：", repr(e))
@@ -451,8 +495,9 @@ def scrape_hermes() -> pd.DataFrame:
 
     df = pd.DataFrame(hermes_data, columns=["source", "name", "color", "price", "link", "img"])
     print(f"本次抓到資料筆數: {len(df)}")
-    print(df.head())
+    print(df.head(10))
     return df
+
 
 # ===================== 主流程 =====================
 
@@ -465,10 +510,7 @@ def main():
     print("=== Hermes scraper 開始執行 ===")
     print("台北現在時間：", now_taipei().isoformat(timespec="seconds"))
 
-    # 1) 抓資料
     df = scrape_hermes()
-
-    # 不管有沒有資料，都先寫入 Sheet1
     write_current_seen_to_gsheet(df)
 
     if df.empty:
@@ -476,10 +518,8 @@ def main():
         print(f"總耗時：{time.time() - start_ts:.1f}s")
         return
 
-    # 2) 讀取已推播記憶
     seen_prices = get_seen_price_map()
 
-    # 3) 比對：新貨或變價才通知；同一輪去重
     notify_list: List[str] = []
     to_append_pairs: List[Tuple[str, str]] = []
     seen_in_run: set[Tuple[str, str]] = set()
@@ -523,6 +563,7 @@ def main():
         print("❗ 追加 Seen 失敗，為避免重複推播，本輪不發送通知。")
 
     print(f"總耗時：{time.time() - start_ts:.1f}s")
+
 
 if __name__ == "__main__":
     main()
